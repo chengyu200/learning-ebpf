@@ -8,18 +8,27 @@
 # Generated vmlinux.h (regenerated from running kernel)
 vmlinux/*/vmlinux.h
 
-# Example binaries
-src/*/*-helloworld
-src/*/helloworld
-src/*/kprobe-unlink
-src/*/fentry-unlink
-src/*/opensnoop
-src/*/bashreadline
-src/*/sigsnoop
-src/*/execsnoop
-src/*/exitsnoop
-src/*/runqlat
-src/*/hardirqs
+# Example binaries (one per APP, built next to its sources)
+/src/*/helloworld
+/src/*/kprobe-unlink
+/src/*/fentry-unlink
+/src/*/opensnoop
+/src/*/bashreadline
+/src/*/sigsnoop
+/src/*/execsnoop
+/src/*/exitsnoop
+/src/*/runqlat
+/src/*/hardirqs
+/src/*/bootstrap
+/src/*/profile
+/src/*/tcpconnlat
+/src/*/tcpstates
+/src/*/javagc
+/src/*/memleak
+/src/*/biopattern
+/src/*/lsm-connect
+/src/*/tc
+/src/*/xdp
 
 # Editor / OS
 .vscode/

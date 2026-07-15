@@ -23,10 +23,34 @@
 
 设计上刻意让 **2↔3**（kprobe vs fentry）、**7↔8**（perf_buffer vs ringbuf）形成对照，覆盖 libbpf 的全部主流 map 类型与挂载类型。
 
+## 高级示例（lessons 11–21）
+
+基于 libbpf + C 的完整项目实践（原教程“高级示例”，lesson 11–21）。其中 12-profile 原为 Rust、15/19/20/21 原为 eunomia，均改写为 libbpf + C。
+
+| # | 示例 | 教学概念 | 挂载/通道 |
+|---|------|---------|---------|
+| 11 | [bootstrap](src/11-bootstrap) | 完整骨架生命周期、exec/exit、argp | tracepoint / ringbuf |
+| 12 | [profile](src/12-profile) | perf_event 采样 profiling、`bpf_get_stack`、`/proc/kallsyms` 符号化 | perf_event / ringbuf |
+| 13 | [tcpconnlat](src/13-tcpconnlat) | TCP connect 延迟 | kprobe / perf_array |
+| 14 | [tcpstates](src/14-tcpstates) | TCP 状态变迁与停留时长 | tracepoint / perf_array |
+| 15 | [javagc](src/15-javagc) | USDT 探针（HotSpot GC） | usdt / perf_array |
+| 16 | [memleak](src/16-memleak) | 内存泄漏追踪（精简版：libc malloc/free + 栈） | uprobe / hash + stack_trace |
+| 17 | [biopattern](src/17-biopattern) | 随机/顺序 I/O 统计 | tracepoint / hash |
+| 18 | [further-reading](src/18-further-reading) | 进阶参考资料索引（无代码） | — |
+| 19 | [lsm-connect](src/19-lsm-connect) | BPF LSM 安全拦截 connect | lsm / trace_pipe |
+| 20 | [tc](src/20-tc) | tc 流量控制（clsact ingress） | tc / trace_pipe |
+| 21 | [xdp](src/21-xdp) | XDP 高性能包处理 | xdp / trace_pipe |
+
+> 环境受限说明：
+> - **15-javagc**：本机无 Java，仅编译通过，运行需 JVM。
+> - **19-lsm-connect**：`bpf` 不在活跃 LSM 列表，仅编译通过，运行需 `lsm=...,bpf` 重启。
+> - **20-tc / 21-xdp**：用 `scripts/setup-veth.sh` 建 veth 对（带 netns）做安全测试。
+
 ## 依赖
 
 - `clang`、`llvm`（含 `llvm-strip`）、`make`
 - `libelf`（`libelf-dev`）、`zlib`（`zlib1g-dev`）、`libssl-dev`（bpftool 构建）
+- 网络：`iproute2`（`ip`/`tc`，仅 tc/xdp 示例需要）
 - 内核启用 `CONFIG_BPF_SYSCALL` 与 `CONFIG_DEBUG_INFO_BTF`（本仓库用 `bpftool btf dump` 从运行内核 `/sys/kernel/btf/vmlinux` 生成 `vmlinux.h`）
 
 安装（Debian/Ubuntu）：
@@ -78,12 +102,14 @@ sudo ./src/2-kprobe-unlink/kprobe-unlink
 ```
 learning-ebpf/
 ├── Makefile            # 顶层：构建 libbpf/bpftool、生成 vmlinux.h、遍历示例
-├── common.mk           # 各示例共享的编译规则（被 src/*/Makefile include）
-├── libbpf/             # git submodule
-├── bpftool/            # git submodule
-├── vmlinux/<arch>/     # 由内核 BTF 生成（.gitignore 忽略）
-├── .build/             # 共享构建产物（.gitignore 忽略）
-└── src/1-helloworld … 10-hardirqs/
+├── common.mk          # 各示例共享的编译规则（被 src/*/Makefile include，含 libbpf/bpftool/vmlinux 构建）
+├── libbpf/            # git submodule
+├── bpftool/           # git submodule
+├── vmlinux/<arch>/    # 由内核 BTF 生成（.gitignore 忽略）
+├── .build/            # 共享构建产物（.gitignore 忽略）
+├── scripts/setup-veth.sh   # 建 veth+netns 供 tc/xdp 测试
+├── src/common/        # 共享 BPF 辅助头（maps.bpf.h）
+└── src/1-helloworld … 21-xdp/
 ```
 
 ## 与原教程的差异

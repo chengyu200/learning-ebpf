@@ -65,8 +65,8 @@ clean:
 install:
 	sudo apt-get update
 	sudo apt-get install -y --no-install-recommends \
-		libelf1 libelf-dev zlib1g-dev \
-		make clang llvm
+		libelf1 libelf-dev zlib1g-dev libssl-dev \
+		make clang llvm iproute2
 
 help:
 	@echo "Targets:"

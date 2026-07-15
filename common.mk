@@ -37,9 +37,12 @@ BPFTOOL ?= $(BUILD_DIR)/bpftool/bootstrap/bpftool
 VMLINUX ?= $(TOP_DIR)/vmlinux/$(ARCH)/vmlinux.h
 OUTPUT      := $(BUILD_DIR)/$(APP)
 
-INCLUDES := -I$(OUTPUT) -I$(BUILD_DIR) -I$(dir $(VMLINUX))
+INCLUDES := -I$(OUTPUT) -I$(BUILD_DIR) -I$(dir $(VMLINUX)) -I$(TOP_DIR)/src/common
 CFLAGS   := -g -Wall
 ALL_LDFLAGS := $(LDFLAGS) $(EXTRA_LDFLAGS)
+
+LIBBPF_OBJDIR ?= $(BUILD_DIR)/libbpf
+BPFTOOL_OUTPUT ?= $(BUILD_DIR)/bpftool
 
 # Clang's default system include dirs, needed when compiling with -target bpf
 # so that asm/types.h, asm/byteorder.h, sys/cdefs.h, etc. are found.
@@ -58,8 +61,34 @@ else
 	MAKEFLAGS += --no-print-directory
 endif
 
-.PHONY: all clean
+.PHONY: all clean deps
 all: $(APP)
+
+# ---- Shared dependencies (libbpf.a + bpftool), built once into .build ----
+deps: $(LIBBPF_OBJ) $(BPFTOOL)
+
+$(LIBBPF_OBJDIR):
+	$(Q)mkdir -p $@
+
+$(LIBBPF_OBJ): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) | $(LIBBPF_OBJDIR)
+	$(call msg,LIB,$@)
+	$(Q)$(MAKE) -C $(LIBBPF_SRC) BUILD_STATIC_ONLY=1 \
+		OBJDIR=$(LIBBPF_OBJDIR) DESTDIR=$(BUILD_DIR) \
+		INCLUDEDIR= LIBDIR= UAPIDIR= install
+
+$(BPFTOOL_OUTPUT):
+	$(Q)mkdir -p $@
+
+$(BPFTOOL): | $(BPFTOOL_OUTPUT)
+	$(call msg,BPFTOOL,$@)
+	$(Q)$(MAKE) ARCH= CROSS_COMPILE= OUTPUT=$(BPFTOOL_OUTPUT)/ -C $(BPFTOOL_SRC) bootstrap
+
+# Generate vmlinux.h from the running kernel's BTF (uses system bpftool).
+$(VMLINUX):
+	$(Q)mkdir -p $(dir $@)
+	$(call msg,VMLINUX,$@)
+	$(Q)bpftool btf dump file /sys/kernel/btf/vmlinux format c > $@
+
 
 clean:
 	$(call msg,CLEAN)

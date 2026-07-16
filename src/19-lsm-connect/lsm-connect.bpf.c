@@ -2,8 +2,9 @@
 /* 19-lsm-connect: block connect() to a fixed IP via BPF LSM.
  *
  * Kernel side: a BPF LSM program on the socket_connect hook that denies
- * connects to 1.1.1.1 (16843009 in network-byte-order int).  Demonstrates the
- * "cannot override a denial" LSM rule and function-level security checks.
+ * connects to 1.1.1.1.  Demonstrates the "cannot override a denial" LSM rule
+ * and function-level security checks.  Destination IPs are printed in
+ * human-readable dotted-quad notation.
  *
  * NOTE: requires the kernel to be booted with `bpf` in the active LSM list
  * (see README.md).  On hosts where bpf is not an active LSM, attach will fail
@@ -35,10 +36,10 @@ int BPF_PROG(restrict_connect, struct socket *sock, struct sockaddr *address,
 	struct sockaddr_in *addr = (struct sockaddr_in *)address;
 	__u32 dest = addr->sin_addr.s_addr;
 
-	bpf_printk("lsm: found connect to %u", dest);
+	bpf_printk("lsm: found connect to %pI4\n", &dest);
 
 	if (dest == blockme) {
-		bpf_printk("lsm: blocking %u", dest);
+		bpf_printk("lsm: blocking %pI4\n", &dest);
 		return -EPERM;
 	}
 	return 0;

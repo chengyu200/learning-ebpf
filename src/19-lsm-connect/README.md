@@ -4,8 +4,8 @@
 
 ## 做什么
 
-- 内核态：`SEC("lsm/socket_connect")` 程序，检查 `sa_family==AF_INET` 且目标地址 == 1.1.1.1，则返回 `-EPERM` 拒绝；遵循“不可覆盖既有拒绝”的 LSM 规则。
-- 用户态：加载/attach；attach 失败时给出启用提示。attach 成功后读取 trace_pipe。
+- 内核态：`SEC("lsm/socket_connect")` 程序，检查 `sa_family==AF_INET` 且目标地址 == 1.1.1.1，则返回 `-EPERM` 拒绝；遵循"不可覆盖既有拒绝"的 LSM 规则。。
+- 用户态：加载/attach；attach 失败时给出启用提示。attach 成功后读取 `trace_pipe`。
 
 ## 教学概念
 
@@ -22,4 +22,7 @@
    ```bash
    sudo ./src/19-lsm-connect/lsm-connect
    # 另开终端：curl 1.1.1.1  → 预期 "Operation not permitted"
+   # trace_pipe 输出示例：
+   #   lsm: found connect to 1.1.1.1
+   #   lsm: blocking 1.1.1.1
    ```

@@ -14,9 +14,14 @@
 
 ## 运行（需要 JVM）
 
-本机未安装 Java，此示例**仅保证编译通过**。运行需要：
-
 1. 安装带 HotSpot USDT 支持的 JDK（OpenJDK HotSpot）。
+
+运行时，需要安装JVM，并启动一个java进程。可以按照如下命令启动：
+```
+javac GCTest.java
+java -XX:+UseG1GC GCTest  # 使用 G1 GC 以产生更多 GC 事件
+```
+
 2. 找到 libjvm.so 路径，例如：
    ```bash
    find /usr/lib/jvm -name libjvm.so

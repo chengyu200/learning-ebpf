@@ -119,8 +119,8 @@ int main(int argc, char **argv)
 
 	ATTACH_USDT(handle_gc_start, "gc__begin");
 	ATTACH_USDT(handle_gc_end, "gc__end");
-	ATTACH_USDT(handle_mem_pool_gc_start, "mem__pool_gc_begin");
-	ATTACH_USDT(handle_mem_pool_gc_end, "mem__pool_gc_end");
+	ATTACH_USDT(handle_mem_pool_gc_start, "mem__pool__gc__begin");
+	ATTACH_USDT(handle_mem_pool_gc_end, "mem__pool__gc__end");
 
 	pb = perf_buffer__new(bpf_map__fd(skel->maps.perf_map), 8,
 			      handle_event, handle_lost, NULL, NULL);

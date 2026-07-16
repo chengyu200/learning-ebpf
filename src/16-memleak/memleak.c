@@ -101,7 +101,7 @@ static void detect_libc(char *out, size_t out_sz)
 		links[nlinks++] = l; \
 	} while (0)
 
-struct agg { __u64 stack_id; __u64 total; __u64 count; };
+struct agg { __u32 stack_id; __u64 total; __u64 count; };
 
 static int agg_cmp(const void *a, const void *b)
 {
@@ -111,8 +111,8 @@ static int agg_cmp(const void *a, const void *b)
 
 static void print_outstanding(struct memleak_bpf *skel)
 {
-	int allocs_fd = bpf_map__fd(skel->maps.allocs);
-	int stack_fd = bpf_map__fd(skel->maps.stack_traces);
+//	int allocs_fd = bpf_map__fd(skel->maps.allocs);
+//	int stack_fd = bpf_map__fd(skel->maps.stack_traces);
 	__u64 prev = 0, curr = 0;
 	struct agg *aggs = NULL;
 	int n = 0, cap = 256, i, j;
@@ -154,7 +154,7 @@ static void print_outstanding(struct memleak_bpf *skel)
 		unsigned long long frames[127];
 		int ksz = sizeof(frames), got;
 
-		printf("\n%llu bytes in %llu allocs  (stack_id=%llu)\n",
+		printf("\n%llu bytes in %llu allocs  (stack_id=%d)\n",
 		       aggs[i].total, aggs[i].count, aggs[i].stack_id);
 		memset(frames, 0, ksz);
 		got = bpf_map__lookup_elem(skel->maps.stack_traces,

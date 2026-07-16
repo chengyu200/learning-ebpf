@@ -25,6 +25,11 @@ sudo ip netns exec bpfns ping 192.168.99.1
 # 或查看原始 trace：sudo cat /sys/kernel/tracing/trace_pipe
 ```
 
+结束后，记得执行如下命令，清理开始建立的veth对
+
+```bash
+sudo ./scripts/setup-veth.sh delete
+```
 ## 适配说明
 
 原教程用 eunomia 的 `/// @tchook` 注解加载；本仓库改为标准 libbpf `bpf_tc_*` API（需用 `LIBBPF_OPTS` 设置结构体的 `.sz` 字段）。

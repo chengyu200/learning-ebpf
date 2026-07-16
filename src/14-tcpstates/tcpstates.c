@@ -102,7 +102,7 @@ static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 		inet_ntop(AF_INET6, e->daddr, d, sizeof(d));
 	}
 
-	printf("%-8s %-7d %-16llu.%06llu %-5llu.%06llu %-12s -> %-12s %s:%d -> %s:%d\n",
+	printf("%-8s %-7d %16llu.%06llu %5llu.%06llu %-12s -> %-12s %s:%d -> %s:%d\n",
 	       ts, e->pid,
 	       e->ts_us / 1000000, e->ts_us % 1000000,
 	       e->delta_us / 1000000, e->delta_us % 1000000,

@@ -17,6 +17,7 @@ struct piddata {
 	char comm[TASK_COMM_LEN];
 	u64 ts;
 	u32 tgid;
+	u32 pid;
 };
 
 struct {
@@ -35,6 +36,7 @@ struct {
 static int trace_connect(struct sock *sk)
 {
 	u32 tgid = bpf_get_current_pid_tgid() >> 32;
+	u32 pid = bpf_get_current_pid_tgid() & 0xFFFFFFFF;
 	struct piddata piddata = {};
 
 	if (targ_tgid && targ_tgid != tgid)
@@ -43,6 +45,7 @@ static int trace_connect(struct sock *sk)
 	bpf_get_current_comm(&piddata.comm, sizeof(piddata.comm));
 	piddata.ts = bpf_ktime_get_ns();
 	piddata.tgid = tgid;
+	piddata.pid = pid;
 	bpf_map_update_elem(&start, &sk, &piddata, 0);
 	return 0;
 }
@@ -72,6 +75,7 @@ static int handle_tcp_rcv_state_process(void *ctx, struct sock *sk)
 	__builtin_memcpy(&event.comm, piddatap->comm, sizeof(event.comm));
 	event.ts_us = ts / 1000;
 	event.tgid = piddatap->tgid;
+	event.pid = piddatap->pid;
 	event.lport = BPF_CORE_READ(sk, __sk_common.skc_num);
 	event.dport = BPF_CORE_READ(sk, __sk_common.skc_dport);
 	event.af = BPF_CORE_READ(sk, __sk_common.skc_family);

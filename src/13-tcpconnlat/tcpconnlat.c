@@ -86,7 +86,7 @@ static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
-	printf("%-8s %-7d %-7llu.%03llu %-6u ",
+	printf("%-8s %-7d %7llu.%03llu %-6u ",
 	       ts, e->tgid, e->delta_us / 1000, e->delta_us % 1000, e->pid);
 	print_addr(e->af, e);
 	printf(" %s\n", e->comm);

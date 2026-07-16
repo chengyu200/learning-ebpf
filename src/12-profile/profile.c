@@ -245,8 +245,10 @@ int main(int argc, char **argv)
 
 	printf("Profiling for %d seconds at %d Hz across %d cpus...\n",
 	       env.duration_s, env.freq, ncpu);
-	for (i = 0; i < env.duration_s && !exiting; i++)
+	for (i = 0; i < env.duration_s && !exiting; i++) {
 		ring_buffer__poll(rb, 1000);
+		sleep(1);
+	}
 	if (!exiting)
 		while (ring_buffer__poll(rb, 0) > 0)
 			;

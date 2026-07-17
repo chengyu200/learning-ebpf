@@ -47,7 +47,7 @@ int main(int argc, char **argv)
 
 	LIBBPF_OPTS(bpf_uprobe_opts, uo, .func_name = "runtime.newproc");
 	link = bpf_program__attach_uprobe_opts(skel->progs.trace_newproc,
-					       0, g_target, 0, &uo);
+					       -1, g_target, 0, &uo);
 	if (!link) {
 		fprintf(stderr, "attach runtime.newproc in %s: %s\n",
 			g_target, strerror(errno));

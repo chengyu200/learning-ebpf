@@ -29,6 +29,51 @@ vmlinux/*/vmlinux.h
 /src/*/lsm-connect
 /src/*/tc
 /src/*/xdp
+# Deep-topic binaries (also cover src/features/*/)
+/src/*/http
+/src/*/bpf_contrack
+/src/*/xdp-tcpdump
+/src/*/xdp-loadbalancer
+/src/*/xdp-test
+/src/*/tcx
+/src/*/sslsniff
+/src/*/funclatency
+/src/*/uprobe-rust
+/src/*/nginx
+/src/*/goroutine
+/src/*/mysql
+/src/*/hide
+/src/*/signal
+/src/*/sudo
+/src/*/replace
+/src/*/detach
+/src/*/syscall
+/src/*/user-ringbuf
+/src/*/btf-uprobe
+/src/*/kfuncs
+/src/*/arena
+/src/*/iters
+/src/*/token
+/src/*/wq
+/src/*/dynptr
+/src/*/struct_ops
+# Features binaries (src/features/<name>/<bin>)
+/src/features/*/arena
+/src/features/*/iters
+/src/features/*/token
+/src/features/*/wq
+/src/features/*/dynptr
+/src/features/*/struct_ops
+# Rust/Go targets built by examples
+/src/*/target
+/src/*/gotest
+# Kernel module build artifacts
+src/43-kfuncs/kernel/*.ko
+src/43-kfuncs/kernel/*.mod*
+src/43-kfuncs/kernel/*.o
+src/43-kfuncs/kernel/Module.symvers
+src/43-kfuncs/kernel/modules.order
+src/43-kfuncs/kernel/.tmp_versions/
 
 # Editor / OS
 .vscode/

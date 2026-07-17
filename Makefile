@@ -18,8 +18,9 @@ ARCH ?= $(shell uname -m | sed 's/x86_64/x86/' \
 			 | sed 's/loongarch64/loongarch/')
 VMLINUX := $(TOP_DIR)/vmlinux/$(ARCH)/vmlinux.h
 
-# Every directory under src/ that contains a Makefile is an example.
-EXAMPLE_DIRS := $(patsubst %/,%,$(dir $(wildcard $(TOP_DIR)/src/*/Makefile)))
+# Every directory under src/ (or src/features/) with a Makefile is an example.
+EXAMPLE_DIRS := $(patsubst %/,%,$(dir $(wildcard $(TOP_DIR)/src/*/Makefile))) \
+		$(patsubst %/,%,$(dir $(wildcard $(TOP_DIR)/src/features/*/Makefile)))
 
 .DEFAULT_GOAL := all
 .PHONY: all deps vmlinux clean install help
@@ -66,7 +67,8 @@ install:
 	sudo apt-get update
 	sudo apt-get install -y --no-install-recommends \
 		libelf1 libelf-dev zlib1g-dev libssl-dev \
-		make clang llvm iproute2
+		make clang llvm iproute2 \
+		golang-go nginx
 
 help:
 	@echo "Targets:"

@@ -46,6 +46,58 @@
 > - **19-lsm-connect**：`bpf` 不在活跃 LSM 列表，仅编译通过，运行需 `lsm=...,bpf` 重启。
 > - **20-tc / 21-xdp**：用 `scripts/setup-veth.sh` 建 veth 对（带 netns）做安全测试。
 
+## 深入主题（lessons 22–50 + features）
+
+基于 libbpf + C 的进阶实践（原教程“深入主题”部分）。涵盖网络进阶、追踪、安全攻击与防御、新内核特性。其中 31（Go）、39（nginx）安装了对应软件；40（mysql）、48（energy）仅 README/编译。
+
+### 网络进阶
+
+| # | 示例 | 教学概念 |
+|---|------|---------|
+| 23 | [http](src/23-http) | socket filter + raw packet socket 解析 TCP/HTTP |
+| 29 | [sockops](src/29-sockops) | sockops + sk_msg sockhash 绕过 TCP/IP 栈 |
+| 41 | [xdp-tcpdump](src/41-xdp-tcpdump) | XDP 捕获 TCP 五元组 |
+| 42 | [xdp-loadbalancer](src/42-xdp-loadbalancer) | XDP L4 负载均衡（hash + redirect_peer） |
+| 46 | [xdp-test](src/46-xdp-test) | XDP 包计数/吞吐测量（per-cpu array） |
+| 50 | [tcx](src/50-tcx) | TCX 可组合流量控制（bpf_program__attach_tcx） |
+
+### 追踪
+
+| # | 示例 | 教学概念 |
+|---|------|---------|
+| 30 | [sslsniff](src/30-sslsniff) | uprobe 挂 libssl SSL_read/SSL_write 捕获明文 |
+| 33 | [funclatency](src/33-funclatency) | 通用函数延迟直方图（kprobe+kretprobe） |
+| 37 | [uprobe-rust](src/37-uprobe-rust) | uprobe 追踪 Rust 程序 |
+| 39 | [nginx](src/39-nginx) | uprobe 追踪 ngx_http_process_request |
+| 31 | [goroutine](src/31-goroutine) | uprobe 追踪 Go runtime.newproc |
+| 40 | [mysql](src/40-mysql) | uprobe 追踪 mysqld dispatch_command（仅编译） |
+| 48 | [energy](src/48-energy) | 能耗监控（仅 README，本机无 powercap） |
+
+### 安全：攻击与防御
+
+| # | 示例 | 教学概念 |
+|---|------|---------|
+| 24 | [hide](src/24-hide) | 覆盖 getdents64 隐藏目录条目 |
+| 25 | [signal](src/25-signal) | bpf_send_signal 终止恶意进程 |
+| 26 | [sudo](src/26-sudo) | 检测 passwd 风格文件读取 |
+| 27 | [replace](src/27-replace) | bpf_probe_write_user 透明替换读取内容 |
+| 28 | [detach](src/28-detach) | pinning + 程序生命周期（detach 后继续运行） |
+| 34 | [syscall](src/34-syscall) | 检查/修改系统调用参数（bpf_override_return） |
+
+### Features：新内核特性
+
+| 示例 | 教学概念 |
+|------|---------|
+| [35-user-ringbuf](src/35-user-ringbuf) | BPF_MAP_TYPE_USER_RINGBUF 用户态→内核异步通信 |
+| [38-btf-uprobe](src/38-btf-uprobe) | CO-RE 扩展到用户态兼容 |
+| [43-kfuncs](src/43-kfuncs) | 内核模块注册自定义 kfunc + BPF 调用 |
+| [features/bpf_arena](src/features/bpf_arena) | arena 零拷贝共享内存 |
+| [features/bpf_iters](src/features/bpf_iters) | BPF 迭代器导出内核数据 |
+| [features/bpf_token](src/features/bpf_token) | BPF token 委托权限 |
+| [features/bpf_wq](src/features/bpf_wq) | BPF 工作队列异步任务 |
+| [features/dynptr](src/features/dynptr) | BPF 动态指针 |
+| [features/struct_ops](src/features/struct_ops) | struct_ops 扩展内核子系统 |
+
 ## 依赖
 
 - `clang`、`llvm`（含 `llvm-strip`）、`make`
@@ -108,8 +160,10 @@ learning-ebpf/
 ├── vmlinux/<arch>/    # 由内核 BTF 生成（.gitignore 忽略）
 ├── .build/            # 共享构建产物（.gitignore 忽略）
 ├── scripts/setup-veth.sh   # 建 veth+netns 供 tc/xdp 测试
-├── src/common/        # 共享 BPF 辅助头（maps.bpf.h）
-└── src/1-helloworld … 21-xdp/
+├── src/common/        # 共享 BPF 辅助头（maps.bpf.h, bits.bpf.h）
+├── src/1-helloworld … 21-xdp/   # 入门 + 高级示例
+├── src/22-android … 50-tcx/      # 深入主题示例
+└── src/features/*/             # 新内核特性示例
 ```
 
 ## 与原教程的差异

@@ -111,7 +111,7 @@ int main(int argc, char **argv)
 	}
 
 	printf("sockops + sk_msg attached. Generate local traffic, e.g.:\n");
-	printf("  curl -s http://127.0.0.1:8080/\n");
+	printf("  curl -s http://127.0.0.1/\n");
 	printf("(trace output follows; Ctrl-C to stop)\n");
 
 	while (!exiting) {

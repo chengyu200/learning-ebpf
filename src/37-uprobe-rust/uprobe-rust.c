@@ -53,13 +53,13 @@ int main(int argc, char **argv)
 	 * can pass an explicit offset.  Here we try func_name first. */
 	LIBBPF_OPTS(bpf_uprobe_opts, uo, .func_name = "slow_function");
 	link = bpf_program__attach_uprobe_opts(skel->progs.trace_slow_function,
-					       0 /* any pid */, g_target, 0, &uo);
+					       -1 /* any pid */, g_target, 0, &uo);
 	if (!link) {
 		/* Fallback: attach by offset 0x8838 (slow_function in target.rs).
 		 * Recompute with `nm target | grep slow_function` for other builds. */
 		fprintf(stderr, "func_name lookup failed, trying offset 0x8838\n");
 		link = bpf_program__attach_uprobe(skel->progs.trace_slow_function,
-						  false, 0, g_target, 0x8838);
+						  false, -1, g_target, 0x8838);
 	}
 	if (!link) { fprintf(stderr, "attach slow_function in %s: %s\n",
 			     g_target, strerror(errno)); err = -errno; goto cleanup; }

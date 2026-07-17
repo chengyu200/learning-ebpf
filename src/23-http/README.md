@@ -14,6 +14,6 @@
 ## 运行
 ```bash
 make -C src/23-http
-sudo ./src/23-http/http lo
-# 另开终端：curl -s http://127.0.0.1:1/  或 ping 127.0.0.1
+sudo ./src/23-http/http  -i  lo
+# 另开终端：curl -s http://127.0.0.1/  或 ping 127.0.0.1
 ```

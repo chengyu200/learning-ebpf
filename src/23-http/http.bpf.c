@@ -87,7 +87,7 @@ int socket_handler(struct __sk_buff *skb)
 		payload_length = MAX_BUF_SIZE;
 	if (payload_length > 0) {
 		bpf_skb_load_bytes(skb, payload_offset, e->payload,
-				   payload_length & (MAX_BUF_SIZE - 1));
+				payload_length);
 	}
 	e->payload_length = payload_length;
 

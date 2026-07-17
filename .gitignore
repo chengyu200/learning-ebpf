@@ -64,6 +64,9 @@ vmlinux/*/vmlinux.h
 /src/features/*/wq
 /src/features/*/dynptr
 /src/features/*/struct_ops
+# P5 binaries
+/src/*/hid
+/src/cgroup/cgroup
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

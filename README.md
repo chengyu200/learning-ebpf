@@ -98,6 +98,24 @@
 | [features/dynptr](src/features/dynptr) | BPF 动态指针 |
 | [features/struct_ops](src/features/struct_ops) | struct_ops 扩展内核子系统 |
 
+### 其他
+
+| # | 示例 | 教学概念 |
+|---|------|---------|
+| 49 | [hid](src/49-hid) | kprobe 追踪 HID（hidraw_report_event） |
+| [cgroup](src/cgroup) | cgroup_skb 出口流量计数 |
+
+### 不可行（仅 README 说明）
+
+| # | 示例 | 原因 |
+|---|------|------|
+| 22 | [android](src/22-android) | 非 Android 环境 |
+| 36 | [userspace-ebpf](src/36-userspace-ebpf) | 需 bpftime/ubpf 运行时 |
+| 44 | [scx-simple](src/44-scx-simple) | sched_ext 未启用（CONFIG_BPF_SCHED 未设） |
+| 45 | [scx-nest](src/45-scx-nest) | 同上 |
+| 47 | [cuda-events](src/47-cuda-events) | 无 GPU 设备 |
+| [xpu](src/xpu) | GPU/NPU 追踪 | 无 GPU/NPU 硬件 |
+
 ## 依赖
 
 - `clang`、`llvm`（含 `llvm-strip`）、`make`
@@ -161,9 +179,10 @@ learning-ebpf/
 ├── .build/            # 共享构建产物（.gitignore 忽略）
 ├── scripts/setup-veth.sh   # 建 veth+netns 供 tc/xdp 测试
 ├── src/common/        # 共享 BPF 辅助头（maps.bpf.h, bits.bpf.h）
-├── src/1-helloworld … 21-xdp/   # 入门 + 高级示例
-├── src/22-android … 50-tcx/      # 深入主题示例
-└── src/features/*/             # 新内核特性示例
+├── src/1-helloworld … 50-tcx/      # 入门 + 高级 + 深入主题示例
+├── src/cgroup/                   # cgroup 级策略示例
+├── src/features/*/             # 新内核特性示例
+└── src/{22-android,36-userspace-ebpf,44-scx-*,47-cuda-events,xpu}/  # 不可行项 README
 ```
 
 ## 与原教程的差异

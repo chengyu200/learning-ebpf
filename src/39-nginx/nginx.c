@@ -35,7 +35,7 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 	do { \
 		LIBBPF_OPTS(bpf_uprobe_opts, uo, .func_name = sym, .retprobe = is_ret); \
 		struct bpf_link *l = bpf_program__attach_uprobe_opts( \
-			skel->progs.prog, 0, g_nginx, 0, &uo); \
+			skel->progs.prog, -1, g_nginx, 0, &uo); \
 		if (!l) { fprintf(stderr, "attach " sym " failed: %s\n", strerror(errno)); \
 			  err = -errno; goto cleanup; } \
 		links[nlinks++] = l; \

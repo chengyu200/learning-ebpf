@@ -1,100 +1,280 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
-/* 30-sslsniff: capture plaintext SSL/TLS data via uprobe on SSL_read/SSL_write.
- *
- * SSL_read(const SSL *ssl, void *buf, int num) -> ret = bytes read.
- * SSL_write(const SSL *ssl, const void *buf, int num) -> ret = bytes written.
- * We use uretprobe on SSL_read (buf filled on return) and uprobe on SSL_write
- * (buf valid on entry).  Teaches uprobe on shared libraries.
- */
-#include "vmlinux.h"
+// Copyright (c) 2023 Yusheng Zheng
+// Based on agentsight/bpf/sslsniff.bpf.c — simplified, OpenSSL only.
+//
+// Based on sslsniff from BCC by Adrian Lopez & Mark Drayton.
+//
+#include <vmlinux.h>
+#include <bpf/bpf_core_read.h>
+#include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include <bpf/bpf_core_read.h>
 #include "sslsniff.h"
 
-char LICENSE[] SEC("license") = "Dual BSD/GPL";
+char LICENSE[] SEC("license") = "GPL";
 
 struct {
-	__uint(type, BPF_MAP_TYPE_RINGBUF);
-	__uint(max_entries, 1024 * 1024);
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, RING_BUFFER_SIZE);
 } rb SEC(".maps");
 
-/* On SSL_write entry: buf (arg2) is valid and num (arg3) is the length. */
-SEC("uprobe")
-int BPF_KPROBE(ssl_write_entry, const void *ssl, const void *buf, int num)
-{
-	struct event *e;
-	int len = num;
-
-	if (len <= 0)
-		return 0;
-	if (len > MAX_DATA_SIZE)
-		len = MAX_DATA_SIZE;
-
-	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-	if (!e)
-		return 0;
-
-	e->pid = bpf_get_current_pid_tgid() >> 32;
-	e->ts_ns = bpf_ktime_get_ns();
-	e->rw = 1;
-	e->data_len = len;
-	bpf_get_current_comm(&e->comm, sizeof(e->comm));
-	bpf_probe_read_user(&e->data, len, buf);
-
-	bpf_ringbuf_submit(e, 0);
-	return 0;
-}
-
-/* On SSL_read return: ret is bytes read; the buf (arg1) was filled by the call.
- * We saved buf in a hash on entry; here we read it.  Simplified: use uretprobe
- * and re-read arg1 from the saved ctx via a per-pid stash. */
 struct {
-	__uint(type, BPF_MAP_TYPE_HASH);
-	__uint(max_entries, 10240);
-	__type(key, u32);
-	__type(value, const void *);
-} read_bufs SEC(".maps");
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 10240);
+    __type(key, __u32);
+    __type(value, size_t*);
+} readbytes_ptrs SEC(".maps");
 
-SEC("uprobe")
-int BPF_KPROBE(ssl_read_entry, const void *ssl, void *buf, int num)
+#define MAX_ENTRIES 10240
+
+#define min(x, y)                      \
+    ({                                 \
+        typeof(x) _min1 = (x);         \
+        typeof(y) _min2 = (y);         \
+        (void)(&_min1 == &_min2);      \
+        _min1 < _min2 ? _min1 : _min2; \
+    })
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_ENTRIES);
+    __type(key, __u32);
+    __type(value, __u64);
+} start_ns SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, MAX_ENTRIES);
+    __type(key, __u32);
+    __type(value, __u64);
+} bufs SEC(".maps");
+
+const volatile pid_t targ_pid = 0;
+const volatile uid_t targ_uid = -1;
+
+static __always_inline bool trace_allowed(u32 uid, u32 pid)
 {
-	u32 pid = bpf_get_current_pid_tgid();
-	bpf_map_update_elem(&read_bufs, &pid, &buf, BPF_ANY);
-	return 0;
+    if (targ_pid && targ_pid != pid)
+        return false;
+    if (targ_uid != -1) {
+        if (targ_uid != uid) {
+            return false;
+        }
+    }
+    return true;
 }
 
-SEC("uretprobe")
-int BPF_KRETPROBE(ssl_read_ret)
+
+/* ---- SSL_read / SSL_write entry: save buf ptr + ts ---- */
+SEC("uprobe/SSL_rw_enter")
+int BPF_UPROBE(probe_SSL_rw_enter, void *ssl, void *buf, int num) {
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+    u32 tid = pid_tgid;
+    u32 uid = bpf_get_current_uid_gid();
+    u64 ts = bpf_ktime_get_ns();
+
+    if (!trace_allowed(uid, pid)) {
+        return 0;
+    }
+
+    /* store arg info for later lookup */
+    bpf_map_update_elem(&bufs, &tid, &buf, BPF_ANY);
+    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY);
+    return 0;
+}
+
+/* ---- SSL_read / SSL_write exit: read ret + buf, submit to ringbuf ---- */
+static int SSL_exit(struct pt_regs *ctx, int rw) {
+    int ret = 0;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+    u32 tid = (u32)pid_tgid;
+    u32 uid = bpf_get_current_uid_gid();
+    u64 ts = bpf_ktime_get_ns();
+
+    if (!trace_allowed(uid, pid)) {
+        return 0;
+    }
+
+    u64 *bufp = bpf_map_lookup_elem(&bufs, &tid);
+    if (bufp == 0)
+        return 0;
+
+    u64 *tsp = bpf_map_lookup_elem(&start_ns, &tid);
+    if (!tsp)
+        return 0;
+    u64 delta_ns = ts - *tsp;
+
+    int len = PT_REGS_RC(ctx);
+    if (len <= 0)  /* no data */
+        return 0;
+
+    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
+    if (!data)
+        return 0;
+
+    data->timestamp_ns = ts;
+    data->delta_ns = delta_ns;
+    data->pid = pid;
+    data->tid = tid;
+    data->uid = uid;
+    data->len = (u32)len;
+    data->buf_filled = 0;
+    data->buf_size = 0;
+    data->rw = rw;
+    data->is_handshake = false;
+    u32 buf_copy_size = min((size_t)MAX_BUF_SIZE, (size_t)len);
+
+    bpf_get_current_comm(&data->comm, sizeof(data->comm));
+
+    if (bufp != 0)
+        ret = bpf_probe_read_user(&data->buf, buf_copy_size, (char *)*bufp);
+
+    bpf_map_delete_elem(&bufs, &tid);
+    bpf_map_delete_elem(&start_ns, &tid);
+
+    if (!ret) {
+        data->buf_filled = 1;
+        data->buf_size = buf_copy_size;
+    } else {
+        data->buf_filled = 0;
+        data->buf_size = 0;
+    }
+
+    bpf_ringbuf_submit(data, 0);
+    return 0;
+}
+
+SEC("uretprobe/SSL_read")
+int BPF_URETPROBE(probe_SSL_read_exit) {
+    return (SSL_exit(ctx, 0));
+}
+
+SEC("uretprobe/SSL_write")
+int BPF_URETPROBE(probe_SSL_write_exit) {
+    return (SSL_exit(ctx, 1));
+}
+
+/* ---- SSL_read_ex / SSL_write_ex entry: save buf + readbytes ptr ---- */
+SEC("uprobe/SSL_rw_ex_enter")
+int BPF_UPROBE(probe_SSL_rw_ex_enter, void *ssl, void *buf, size_t num, size_t *readbytes) {
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+    u32 tid = (u32)pid_tgid;
+    u32 uid = bpf_get_current_uid_gid();
+    u64 ts = bpf_ktime_get_ns();
+
+    if (!trace_allowed(uid, pid)) {
+        return 0;
+    }
+
+    bpf_map_update_elem(&bufs, &tid, &buf, BPF_ANY);
+    bpf_map_update_elem(&start_ns, &tid, &ts, BPF_ANY);
+    bpf_map_update_elem(&readbytes_ptrs, &tid, &readbytes, BPF_ANY);
+
+    return 0;
+}
+
+/* ---- SSL_read_ex / SSL_write_ex exit ---- */
+static int ex_SSL_exit(struct pt_regs *ctx, int rw, int len) {
+    int ret = 0;
+    u64 pid_tgid = bpf_get_current_pid_tgid();
+    u32 pid = pid_tgid >> 32;
+    u32 tid = (u32)pid_tgid;
+    u32 uid = bpf_get_current_uid_gid();
+    u64 ts = bpf_ktime_get_ns();
+
+    if (!trace_allowed(uid, pid)) {
+        return 0;
+    }
+
+    u64 *bufp = bpf_map_lookup_elem(&bufs, &tid);
+    if (bufp == 0)
+        return 0;
+
+    u64 *tsp = bpf_map_lookup_elem(&start_ns, &tid);
+    if (!tsp)
+        return 0;
+    u64 delta_ns = ts - *tsp;
+
+    if (len <= 0)  /* no data */
+        return 0;
+
+    struct probe_SSL_data_t *data = bpf_ringbuf_reserve(&rb, sizeof(*data), 0);
+    if (!data)
+        return 0;
+
+    data->timestamp_ns = ts;
+    data->delta_ns = delta_ns;
+    data->pid = pid;
+    data->tid = tid;
+    data->uid = uid;
+    data->len = (u32)len;
+    data->buf_filled = 0;
+    data->buf_size = 0;
+    data->rw = rw;
+    data->is_handshake = false;
+
+    /* Explicit bounds clamping to satisfy eBPF verifier.
+     * Use bitmask first to ensure value range, then clamp to actual max. */
+    u32 buf_copy_size = (u32)len & 0xFFFFF;  /* Mask to 20 bits (1MB-1) */
+    if (buf_copy_size > MAX_BUF_SIZE)
+        buf_copy_size = MAX_BUF_SIZE;
+
+    bpf_get_current_comm(&data->comm, sizeof(data->comm));
+
+    if (bufp != 0)
+        ret = bpf_probe_read_user(&data->buf, buf_copy_size, (char *)*bufp);
+
+    bpf_map_delete_elem(&bufs, &tid);
+    bpf_map_delete_elem(&start_ns, &tid);
+
+    if (!ret) {
+        data->buf_filled = 1;
+        data->buf_size = buf_copy_size;
+    } else {
+        data->buf_filled = 0;
+        data->buf_size = 0;
+    }
+
+    bpf_ringbuf_submit(data, 0);
+
+    return 0;
+}
+
+SEC("uretprobe/SSL_write_ex")
+int BPF_URETPROBE(probe_SSL_write_ex_exit)
 {
-	u32 pid = bpf_get_current_pid_tgid();
-	const void **bufp;
-	const void *buf;
-	int ret = (int)PT_REGS_RC(ctx);
-	struct event *e;
-	int len;
+    u32 tid = (u32)bpf_get_current_pid_tgid();
+    size_t **readbytes_ptr = bpf_map_lookup_elem(&readbytes_ptrs, &tid);
+    if (!readbytes_ptr)
+        return 0;
 
-	if (ret <= 0)
-		goto out;
-	len = ret > MAX_DATA_SIZE ? MAX_DATA_SIZE : ret;
+    size_t written = 0;
+    bpf_probe_read_user(&written, sizeof(written), *readbytes_ptr);
+    bpf_map_delete_elem(&readbytes_ptrs, &tid);
 
-	bufp = bpf_map_lookup_elem(&read_bufs, &pid);
-	if (!bufp)
-		goto out;
-	buf = *bufp;
+    int ret = PT_REGS_RC(ctx);
+    int len = (ret == 1) ? written : 0;
 
-	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
-	if (e) {
-		e->pid = pid;
-		e->ts_ns = bpf_ktime_get_ns();
-		e->rw = 0;
-		e->data_len = len;
-		bpf_get_current_comm(&e->comm, sizeof(e->comm));
-		bpf_probe_read_user(&e->data, len, buf);
-		bpf_ringbuf_submit(e, 0);
-	}
+    return ex_SSL_exit(ctx, 1, len);
+}
 
-out:
-	bpf_map_delete_elem(&read_bufs, &pid);
-	return 0;
+SEC("uretprobe/SSL_read_ex")
+int BPF_URETPROBE(probe_SSL_read_ex_exit)
+{
+    u32 tid = (u32)bpf_get_current_pid_tgid();
+    size_t **readbytes_ptr = bpf_map_lookup_elem(&readbytes_ptrs, &tid);
+    if (!readbytes_ptr)
+        return 0;
+
+    size_t written = 0;
+    bpf_probe_read_user(&written, sizeof(written), *readbytes_ptr);
+    bpf_map_delete_elem(&readbytes_ptrs, &tid);
+
+    int ret = PT_REGS_RC(ctx);
+    int len = (ret == 1) ? written : 0;
+
+    return ex_SSL_exit(ctx, 0, len);
 }

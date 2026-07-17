@@ -5,5 +5,5 @@
 ## 运行
 ```bash
 make -C src/41-xdp-tcpdump
-sudo ./src/41-xdp-tcpdump/xdp-tcpdump lo  # 另开终端: curl http://127.0.0.1:1/
+sudo ./src/41-xdp-tcpdump/xdp-tcpdump lo  # 另开终端: curl http://127.0.0.1/
 ```

@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: (LGPL-2.1 OR BSD-2-Clause)
 /* 35-user-ringbuf: user-space loader.
  *
- * Writes messages into the user ring buffer via bpf_map_update_elem (which
- * for a USER_RINGBUF appends); the BPF perf_event program drains them
- * periodically with bpf_user_ringbuf_drain.
+ * 用 libbpf 的 user_ring_buffer API 向内核异步发送消息。
+ * 内核侧的 perf_event 程序用 bpf_user_ringbuf_drain 排空消息并打印。
+ *
+ * 教学概念：
+ * - BPF_MAP_TYPE_USER_RINGBUF：用户态→内核态的环形缓冲区
+ * - user_ring_buffer__new/reserve/submit：libbpf 用户态 API
+ * - bpf_user_ringbuf_drain：内核侧排空 helper
+ * - perf_event 程序作为定期触发器
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,14 +34,8 @@ int main(int argc, char **argv)
 {
 	struct bpf_link *link = NULL;
 	struct user_ringbuf_bpf *skel;
-	int err = 0, i, ncpu, pe_fd = -1;
-	struct perf_event_attr attr = {
-		.size = sizeof(attr),
-		.type = PERF_TYPE_SOFTWARE,
-		.config = PERF_COUNT_SW_CPU_CLOCK,
-		.sample_type = PERF_SAMPLE_RAW,
-		.freq = 1, .sample_freq = 5, .disabled = 1,
-	};
+	struct user_ring_buffer *urb = NULL;
+	int err = 0, i, ncpu;
 
 	libbpf_set_print(libbpf_print_fn);
 	signal(SIGINT, sig_handler);
@@ -47,31 +46,56 @@ int main(int argc, char **argv)
 	err = user_ringbuf_bpf__attach(skel);
 	if (err) { fprintf(stderr, "attach failed\n"); goto cleanup; }
 
+	/* 用 perf_event (CPU_CLOCK, 5Hz) 定期触发 BPF 程序排空 user ringbuf */
+	struct perf_event_attr attr = {
+		.size = sizeof(attr),
+		.type = PERF_TYPE_SOFTWARE,
+		.config = PERF_COUNT_SW_CPU_CLOCK,
+		.sample_type = PERF_SAMPLE_RAW,
+		.freq = 1, .sample_freq = 5, .disabled = 1,
+	};
+
 	ncpu = sysconf(_SC_NPROCESSORS_ONLN);
 	for (i = 0; i < ncpu; i++) {
 		int fd = syscall(__NR_perf_event_open, &attr, -1, i, -1, 0);
 		if (fd < 0) continue;
-		struct bpf_link *l = bpf_program__attach_perf_event(skel->progs.drain_user_ring, fd);
-		if (l && i == 0) { link = l; pe_fd = fd; }
+		struct bpf_link *l = bpf_program__attach_perf_event(
+			skel->progs.drain_user_ring, fd);
+		if (l && i == 0) { link = l; }
 		else if (l) bpf_link__destroy(l);
 		else close(fd);
 	}
 
-	printf("user-ringbuf demo; writing messages... Ctrl-C\n");
+	/* 创建 user ring buffer 实例（libbpf 封装了 mmap + 原子操作） */
+	urb = user_ring_buffer__new(bpf_map__fd(skel->maps.user_ring), NULL);
+	if (!urb) {
+		fprintf(stderr, "user_ring_buffer__new failed: %s\n", strerror(errno));
+		err = -errno;
+		goto cleanup;
+	}
+
+	setvbuf(stdout, NULL, _IONBF, 0);
+	printf("user-ringbuf demo: writing messages... Ctrl-C\n");
 	printf("(watch trace_pipe for kernel-side drain output)\n");
+
 	int seq = 0;
-	int ur_fd = bpf_map__fd(skel->maps.user_ring);
 	while (!exiting) {
 		char msg[32];
 		int n = snprintf(msg, sizeof(msg), "hello %d", seq++);
-		/* For a USER_RINGBUF map, bpf_map_update_elem appends a record. */
-		bpf_map_update_elem(ur_fd, msg, &n, BPF_ANY);
+
+		/* 在 user ringbuf 中预留空间，写入数据，然后提交 */
+		void *slot = user_ring_buffer__reserve(urb, n + 1);
+		if (slot) {
+			memcpy(slot, msg, n + 1);
+			user_ring_buffer__submit(urb, slot);
+			printf("wrote: %s\n", msg);
+		}
 		sleep(1);
 	}
 
 cleanup:
 	if (link) bpf_link__destroy(link);
-	if (pe_fd >= 0) close(pe_fd);
+	user_ring_buffer__free(urb);
 	user_ringbuf_bpf__destroy(skel);
 	return err < 0 ? -err : 0;
 }

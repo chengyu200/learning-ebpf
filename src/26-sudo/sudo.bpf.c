@@ -58,7 +58,11 @@ int handle_read_exit(struct trace_event_raw_sys_exit *ctx)
 	if (!ap)
 		return 0;
 
-	len = ret > (int)sizeof(buf) ? (int)sizeof(buf) : ret;
+	/* 用掩码限定 len 上界：verifier 要求确定范围。
+	 * & 0x3f 确保 len <= 63（< sizeof(buf)=64） */
+	len = ret & 0x3f;
+	if (len <= 0)
+		goto out;
 	if (bpf_probe_read_user(buf, len, ap->buf))
 		goto out;
 

@@ -8,6 +8,8 @@
  * 教学概念：
  * - BPF_MAP_TYPE_USER_RINGBUF：用户态→内核态的环形缓冲区
  * - bpf_user_ringbuf_drain：内核侧排空 helper
+ * - 回调签名是 (struct bpf_dynptr *dynptr, void *context)，
+ *   数据通过 bpf_dynptr_read 或 bpf_dynptr_data 读取
  * - perf_event 程序作为定期触发器
  */
 #include "vmlinux.h"
@@ -26,10 +28,28 @@ struct {
 	__uint(max_entries, 256 * 1024);
 } rb SEC(".maps");
 
-/* bpf_user_ringbuf_drain 的回调函数 */
-static int handle_msg(void *ctx, void *data, size_t len)
+/* bpf_user_ringbuf_drain 的回调函数
+ *
+ * 注意：回调签名是 (struct bpf_dynptr *dynptr, void *context)，
+ * 不是 (void *ctx, void *data, size_t len)。
+ * 数据需要通过 bpf_dynptr_read 或 bpf_dynptr_data 从 dynptr 读取。
+ *
+ * @dynptr   包含用户态写入数据的动态指针
+ * @context  透传的用户上下文
+ * @return   0=继续排空，非0=停止 */
+static long handle_msg(struct bpf_dynptr *dynptr, void *context)
 {
-	bpf_printk("user-ringbuf: received %u bytes", (__u32)len);
+	char buf[8] = {};
+
+	/* 用 bpf_dynptr_read 从 dynptr 读取前 8 字节到栈缓冲区 */
+	int ret = bpf_dynptr_read(buf, sizeof(buf), dynptr, 0, 0);
+	if (ret == 0)
+		bpf_printk("user-ringbuf: recv: %c%c%c%c%c%c%c%c",
+			   buf[0], buf[1], buf[2], buf[3],
+			   buf[4], buf[5], buf[6], buf[7]);
+	else
+		bpf_printk("user-ringbuf: dynptr_read failed: %d", ret);
+
 	return 0;
 }
 

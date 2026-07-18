@@ -147,21 +147,31 @@ int xdp_lb(struct xdp_md *ctx)
 
 	/* ── 第 5 步：重写目的 IP 地址 ──
 	 * 将原始目的 IP 替换为后端服务器 IP */
-	__u32 old_daddr = iph->daddr;
-	__u32 new_daddr = be->addr;
+	__be32 old_daddr = iph->daddr;
+	__be32 new_daddr = be->addr;
 
-	/* ── 第 6 步：增量更新 IP 校验和 ──
-	 * 修改 IP 头后需要更新校验和。增量更新只需计算变化的部分，
-	 * 无需重新校验整个 IP 头，效率更高。
+	/* ── 第 6 步：用 bpf_csum_diff 增量更新 IP 校验和 ──
 	 *
-	 * 原理：IP 校验和是反码和（ones' complement sum）。
-	 *   checksum_new = checksum_old - old_daddr + new_daddr
-	 * 因为是反码运算，用加减法 + 进位回卷实现。 */
-	__u32 csum = ~iph->check;                    /* 取反码，转为正码和 */
-	csum += (new_daddr & 0xFFFF) + (new_daddr >> 16);  /* 加新地址的两个 16 位半字 */
-	csum -= (old_daddr & 0xFFFF) + (old_daddr >> 16);  /* 减旧地址的两个 16 位半字 */
-	csum = (csum & 0xFFFF) + (csum >> 16);       /* 进位回卷（第一次） */
-	iph->check = ~(csum + (csum >> 16));         /* 再回卷一次，取反码得到最终校验和 */
+	 * IP 校验和是反码和（ones' complement sum）。
+	 * 修改了 daddr 字段后，校验和需要增量更新：
+	 *   new_check = old_check - old_daddr + new_daddr
+	 *
+	 * bpf_csum_diff 是 BPF 辅助函数（helper #28），对 XDP 程序可用。
+	 * 它计算 from → to 的校验和差值（反码和），返回 __wsum（32 位）。
+	 *
+	 * 参数：
+	 *   from       = 旧值数组指针（old_daddr，4 字节）
+	 *   from_size  = 旧值字节数（4）
+	 *   to         = 新值数组指针（new_daddr，4 字节）
+	 *   to_size    = 新值字节数（4）
+	 *   seed       = 初始种子（这里用旧校验和的反码作为种子，
+	 *                这样结果直接包含旧校验和的累加）
+	 *
+	 * 计算结果 ~diff 即为新的校验和。 */
+	__wsum csum_diff = bpf_csum_diff(&old_daddr, sizeof(old_daddr),
+					&new_daddr, sizeof(new_daddr),
+					~iph->check);
+	iph->check = ~csum_diff;
 
 	/* 写入新的目的 IP */
 	iph->daddr = new_daddr;

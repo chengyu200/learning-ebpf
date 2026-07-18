@@ -13,7 +13,7 @@
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
 
 const volatile int target_strlen = 0;
-const char target_name[16] = {};
+const volatile char target_name[16] = {};
 
 SEC("tp/syscalls/sys_enter_execve")
 int handle_exec(struct trace_event_raw_sys_enter *ctx)
@@ -26,17 +26,15 @@ int handle_exec(struct trace_event_raw_sys_enter *ctx)
 
 	/* Read the basename of the executable path. */
 	bpf_probe_read_user_str(comm, sizeof(comm), filename);
-	char tmp[16];
-	bpf_probe_read_kernel(tmp, target_strlen, target_name);
 
-	/* Check if the filename contains the target (simple suffix match). */
+	/* Check if the filename contains the target (simple substring match). */
 	int i, j, len = 0;
-	while (comm[len] && len < 16) len++;
+	while (len < 16 && comm[len] != '\0') len++;
 	bool match = false;
 	for (i = 0; i + target_strlen <= len; i++) {
 		bool m = true;
 		for (j = 0; j < target_strlen; j++)
-			if (comm[i + j] != tmp[j]) { m = false; break; }
+			if (comm[i + j] != target_name[j]) { m = false; break; }
 		if (m) { match = true; break; }
 	}
 

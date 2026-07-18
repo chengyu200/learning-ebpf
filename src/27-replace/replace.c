@@ -40,12 +40,13 @@ int main(int argc, char **argv)
 	skel->rodata->from_len = strlen(argv[1]);
 	skel->rodata->to_len = strlen(argv[2]);
 
+	printf("replacing '%s' -> '%s' in all reads... Ctrl-C\n", argv[1], argv[2]);
+
 	err = replace_bpf__load(skel);
 	if (err) { fprintf(stderr, "load failed\n"); goto cleanup; }
 	err = replace_bpf__attach(skel);
 	if (err) { fprintf(stderr, "attach failed\n"); goto cleanup; }
 
-	printf("replacing '%s' -> '%s' in all reads... Ctrl-C\n", argv[1], argv[2]);
 	while (!exiting) sleep(1);
 
 cleanup:

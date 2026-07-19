@@ -28,7 +28,6 @@ int call_kfunc(void *ctx)
 {
 	struct event *e;
 	const char *greet;
-	int i = 0;
 
 	e = bpf_ringbuf_reserve(&rb, sizeof(*e), 0);
 	if (!e)
@@ -36,12 +35,11 @@ int call_kfunc(void *ctx)
 	e->pid = bpf_get_current_pid_tgid() >> 32;
 
 	greet = bpf_kfunc_greet();
-	/* Copy up to 63 bytes of the returned string. */
-	while (i < 63 && greet[i]) {
-		e->msg[i] = greet[i];
-		i++;
-	}
-	e->msg[i] = 0;
+	/* kfunc 返回 const char* 指向一个字符串常量。
+	 * verifier 知道返回值的内存大小为 1 字节（const char），
+	 * 不能直接用 greet[i] 做数组下标访问（越界检查会失败）。
+	 * 用 bpf_probe_read_kernel_str 安全地读取整个字符串。 */
+	bpf_probe_read_kernel_str(e->msg, sizeof(e->msg), greet);
 
 	bpf_ringbuf_submit(e, 0);
 	return 0;

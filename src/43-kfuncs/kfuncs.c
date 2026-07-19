@@ -33,6 +33,7 @@ int main(int argc, char **argv)
 
 	libbpf_set_print(libbpf_print_fn);
 	signal(SIGINT, sig_handler);
+	setvbuf(stdout, NULL, _IONBF, 0);
 	signal(SIGTERM, sig_handler);
 
 	skel = kfuncs_bpf__open_and_load();

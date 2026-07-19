@@ -19,6 +19,7 @@ int dump_task(struct bpf_iter__task *ctx)
 	if (task == NULL)
 		return 0;
 
-	BPF_SEQ_PRINTF(seq, "pid=%d comm=%s\n", task->pid, task->comm);
+	BPF_SEQ_PRINTF(seq, "pid = %d tid=%d comm=%s\n", task->tgid,  task->pid, task->comm);
+
 	return 0;
 }

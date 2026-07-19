@@ -10,9 +10,13 @@
 static volatile sig_atomic_t exiting;
 static void sig_handler(int sig) { exiting = 1; }
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list args)
+{ return vfprintf(stderr, format, args); }
+
+static int handle_event(void *ctx, void *data, size_t data_sz)
 {
-	if (level == LIBBPF_DEBUG) return 0;
-	return vfprintf(stderr, format, args);
+	const __u64 *val = data;
+	printf("arena counter: %llu\n", *val);
+	return 0;
 }
 
 int main(int argc, char **argv)
@@ -29,13 +33,19 @@ int main(int argc, char **argv)
 	err = arena_bpf__attach(skel);
 	if (err) { fprintf(stderr, "attach failed\n"); goto cleanup; }
 
-	printf("bpf_arena demo; run commands to trigger execve... Ctrl-C\n");
-	while (!exiting) sleep(1);
+	setvbuf(stdout, NULL, _IONBF, 0);
+	printf("arena demo: run commands to trigger... Ctrl-C\n");
 
-	__u32 key = 0; __u64 val = 0;
-	bpf_map__lookup_elem(skel->maps.arena, &key, sizeof(key), &val, sizeof(val), 0);
-	printf("arena[0] = %llu\n", val);
+	struct ring_buffer *rb = ring_buffer__new(
+		bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
+	if (!rb) { err = -1; goto cleanup; }
 
+	while (!exiting) {
+		err = ring_buffer__poll(rb, 100);
+		if (err == -EINTR) { err = 0; break; }
+		if (err < 0) break;
+	}
+	ring_buffer__free(rb);
 cleanup:
 	arena_bpf__destroy(skel);
 	return err < 0 ? -err : 0;

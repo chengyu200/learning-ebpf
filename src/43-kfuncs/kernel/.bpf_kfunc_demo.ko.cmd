@@ -1,1 +1,0 @@
-savedcmd_bpf_kfunc_demo.ko := ld -r -EL  -maarch64elf -z noexecstack --no-warn-rwx-segments --build-id=sha1  -T /usr/src/linux-headers-7.0.0-27-generic/scripts/module.lds -o bpf_kfunc_demo.ko bpf_kfunc_demo.o bpf_kfunc_demo.mod.o .module-common.o

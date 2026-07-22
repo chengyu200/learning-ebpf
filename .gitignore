@@ -67,6 +67,7 @@ vmlinux/*/vmlinux.h
 # P5 binaries
 /src/*/hid
 /src/cgroup/cgroup
+/src/*/sysctl-monitor
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

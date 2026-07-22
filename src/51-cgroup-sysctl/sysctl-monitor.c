@@ -41,8 +41,16 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 {
 	const struct sysctl_write_event *e = data;
 	struct tm *tm;
-	char ts[32];
+	char ts[32], old[64], new[64];
 	time_t t;
+
+	/* 去掉 old_value / new_value 尾部的换行符 */
+	snprintf(old, sizeof(old), "%s", e->old_value);
+	snprintf(new, sizeof(new), "%s", e->new_value);
+	for (char *p = old; *p; p++)
+		if (*p == '\n' || *p == '\r') { *p = '\0'; break; }
+	for (char *p = new; *p; p++)
+		if (*p == '\n' || *p == '\r') { *p = '\0'; break; }
 
 	time(&t);
 	tm = localtime(&t);
@@ -50,8 +58,8 @@ static int handle_event(void *ctx, void *data, size_t data_sz)
 
 	printf("%-8s %-7d %-16s %-35s %s → %s\n",
 	       ts, e->pid, e->comm, e->path,
-	       e->old_value[0] ? e->old_value : "(empty)",
-	       e->new_value[0] ? e->new_value : "(empty)");
+	       old[0] ? old : "(empty)",
+	       new[0] ? new : "(empty)");
 	return 0;
 }
 

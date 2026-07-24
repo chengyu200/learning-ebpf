@@ -25,8 +25,6 @@
 #include <fcntl.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include <sys/syscall.h>
-#include <linux/bpf.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "sk-lookup-proxy.h"
@@ -116,7 +114,8 @@ static void handle_client(int client_fd)
 int main(int argc, char **argv)
 {
 	struct sk_lookup_proxy_bpf *skel;
-	int backend_fd = -1, netns_fd = -1, link_fd = -1;
+	struct bpf_link *link = NULL;
+	int backend_fd = -1, netns_fd = -1;
 	int err = 0, map_fd, key = 0;
 	__u64 sock_val;
 
@@ -155,7 +154,7 @@ int main(int argc, char **argv)
 
 	/* ── 第 4 步：挂载 BPF 程序到当前网络命名空间 ──
 	 * sk_lookup 程序挂载到 netns，不是 cgroup 或网卡。
-	 * libbpf 1.7 没有封装 attach 函数，需要直接调用 bpf_link_create。 */
+	 * libbpf 提供 bpf_program__attach_netns 封装了 bpf_link_create。 */
 	netns_fd = open("/proc/self/ns/net", O_RDONLY);
 	if (netns_fd < 0) {
 		fprintf(stderr, "Failed to open netns: %s\n", strerror(errno));
@@ -163,10 +162,9 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	int prog_fd = bpf_program__fd(skel->progs.l7_proxy);
-	link_fd = bpf_link_create(prog_fd, netns_fd, BPF_SK_LOOKUP, NULL);
-	if (link_fd < 0) {
-		fprintf(stderr, "bpf_link_create(BPF_SK_LOOKUP) failed: %s\n",
+	link = bpf_program__attach_netns(skel->progs.l7_proxy, netns_fd);
+	if (!link) {
+		fprintf(stderr, "bpf_program__attach_netns failed: %s\n",
 			strerror(errno));
 		err = -errno;
 		goto cleanup;
@@ -179,7 +177,12 @@ int main(int argc, char **argv)
 	       PROXY_PORT_START, PROXY_PORT_END);
 	printf("Ctrl-C to stop\n\n");
 
-	/* ── 第 5 步：accept() 循环 ── */
+	/* ── 第 5 步：accept() 循环 ──
+	 * 设置 backend_fd 为非阻塞，配合 SIGINT 优雅退出。
+	 * SIGINT 打断 accept() 后 errno=EINTR，检查 exiting 决定是否退出。 */
+	int flags = fcntl(backend_fd, F_GETFL, 0);
+	fcntl(backend_fd, F_SETFL, flags | O_NONBLOCK);
+
 	while (!exiting) {
 		struct sockaddr_in client_addr;
 		socklen_t addr_len = sizeof(client_addr);
@@ -187,11 +190,18 @@ int main(int argc, char **argv)
 
 		client_fd = accept(backend_fd, (struct sockaddr *)&client_addr, &addr_len);
 		if (client_fd < 0) {
-			if (errno == EINTR)
+			if (errno == EINTR || errno == EWOULDBLOCK || errno == EAGAIN) {
+				if (exiting)
+					break;
+				usleep(10000);  /* 10ms 轮询 */
 				continue;
+			}
 			fprintf(stderr, "accept: %s\n", strerror(errno));
 			break;
 		}
+
+		/* 恢复 client_fd 为阻塞模式 */
+		fcntl(client_fd, F_SETFL, flags & ~O_NONBLOCK);
 
 		printf("[%d] connection from %s:%d\n",
 		       client_fd,
@@ -204,8 +214,8 @@ int main(int argc, char **argv)
 	err = 0;
 
 cleanup:
-	if (link_fd >= 0)
-		close(link_fd);
+	if (link)
+		bpf_link__destroy(link);
 	if (netns_fd >= 0)
 		close(netns_fd);
 	if (backend_fd >= 0)

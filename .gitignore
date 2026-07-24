@@ -68,6 +68,7 @@ vmlinux/*/vmlinux.h
 /src/*/hid
 /src/cgroup/cgroup
 /src/*/sysctl-monitor
+/src/*/sk-lookup-proxy
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

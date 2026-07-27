@@ -30,6 +30,10 @@ int bpf_redir(struct sk_msg_md *msg)
 	 * SK_DROP on failure (key not found).  Returning SK_DROP would cause
 	 * EPERM on send().  Instead, always return SK_PASS so that a failed
 	 * redirect falls through to the normal TCP send path. */
-	bpf_msg_redirect_hash(msg, &sock_ops_map, &key, BPF_F_INGRESS);
+	int ret = bpf_msg_redirect_hash(msg, &sock_ops_map, &key, BPF_F_INGRESS);
+
+	bpf_printk(">>> sk_msg redir: ret=%d lp=%u rp=%u",
+		   ret, msg->local_port, bpf_ntohl(msg->remote_port));
+
 	return SK_PASS;
 }

@@ -85,20 +85,28 @@ int main(int argc, char **argv)
 	}
 	close(cgroup_fd);
 
-	/* sk_msg program: load, then attach to the shared SOCKHASH map. */
-	rd_skel = bpf_redirect_bpf__open_and_load();
+	/* sk_msg program: open (but don't load yet), reuse the contrack
+	 * SOCKHASH, then load — so the redirect program binds to the *same*
+	 * map instance the sockops program populates.  Doing reuse *after*
+	 * open_and_load would be too late: the program would already be bound
+	 * to a freshly-created, disconnected sockhash. */
+	rd_skel = bpf_redirect_bpf__open();
 	if (!rd_skel) {
-		fprintf(stderr, "Failed to open/load redirect skeleton\n");
+		fprintf(stderr, "Failed to open redirect skeleton\n");
 		err = 1;
 		goto cleanup;
 	}
 
-	/* Reuse the contrack map in the redirect skeleton so both programs share
-	 * the same SOCKHASH instance. */
 	err = bpf_map__reuse_fd(rd_skel->maps.sock_ops_map,
 				bpf_map__fd(ct_skel->maps.sock_ops_map));
 	if (err) {
 		fprintf(stderr, "map reuse failed: %s\n", strerror(-err));
+		goto cleanup;
+	}
+
+	err = bpf_redirect_bpf__load(rd_skel);
+	if (err) {
+		fprintf(stderr, "Failed to load redirect skeleton: %s\n", strerror(-err));
 		goto cleanup;
 	}
 

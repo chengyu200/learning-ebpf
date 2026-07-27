@@ -27,9 +27,10 @@ int bpf_sockops_handler(struct bpf_sock_ops *skops)
 		.family = skops->family,
 	};
 
-	bpf_printk(">>> new conn: op=%d port=%d -> %d",
-		   op, bpf_ntohl(key.sport), bpf_ntohl(key.dport));
+	int err = bpf_sock_hash_update(skops, &sock_ops_map, &key, BPF_NOEXIST);
 
-	bpf_sock_hash_update(skops, &sock_ops_map, &key, BPF_NOEXIST);
+	bpf_printk(">>> new conn: op=%d %u->%u update_err=%d",
+		   op, bpf_ntohl(key.sport), bpf_ntohl(key.dport), err);
+
 	return BPF_OK;
 }

@@ -13,6 +13,8 @@
 #include <unistd.h>
 #include <errno.h>
 #include <signal.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include "proxy.h"
@@ -22,6 +24,37 @@ static volatile sig_atomic_t exiting;
 static void sig_handler(int sig)
 {
 	exiting = 1;
+}
+
+/* 加入指定 cgroup，使后续创建的 socket 归属该 cgroup。
+ * 必须在 create_server_socket() 之前调用，否则 listening socket
+ * 仍留在旧 cgroup，sockops 不会对其 accepted socket 触发。 */
+static int join_cgroup(const char *path)
+{
+	char procs_path[256], pidbuf[32];
+	int fd, len;
+
+	if (mkdir(path, 0755) < 0 && errno != EEXIST) {
+		fprintf(stderr, "[server] mkdir %s: %s\n", path, strerror(errno));
+		return -1;
+	}
+
+	snprintf(procs_path, sizeof(procs_path), "%s/cgroup.procs", path);
+	fd = open(procs_path, O_WRONLY);
+	if (fd < 0) {
+		fprintf(stderr, "[server] open %s: %s\n", procs_path, strerror(errno));
+		return -1;
+	}
+	len = snprintf(pidbuf, sizeof(pidbuf), "%d", getpid());
+	if (write(fd, pidbuf, len) != len) {
+		fprintf(stderr, "[server] write cgroup.procs: %s\n", strerror(errno));
+		close(fd);
+		return -1;
+	}
+	close(fd);
+
+	printf("[server] joined cgroup %s (pid=%d)\n", path, getpid());
+	return 0;
 }
 
 static int create_server_socket(void)
@@ -146,11 +179,17 @@ static void handle_client(int fd)
 	close(fd);
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
 	int srv_fd;
+	const char *cgroup = NULL;
 
 	setvbuf(stdout, NULL, _IONBF, 0);
+
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--cgroup") == 0 && i + 1 < argc)
+			cgroup = argv[++i];
+	}
 
 	struct sigaction sa = {};
 	sa.sa_handler = sig_handler;
@@ -158,6 +197,11 @@ int main(void)
 	sa.sa_flags = 0;
 	sigaction(SIGINT, &sa, NULL);
 	sigaction(SIGTERM, &sa, NULL);
+
+	if (cgroup) {
+		if (join_cgroup(cgroup) < 0)
+			return 1;
+	}
 
 	srv_fd = create_server_socket();
 	if (srv_fd < 0)

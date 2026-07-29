@@ -148,6 +148,54 @@ int bpf_redir(struct sk_msg_md *msg) {
 }
 ```
 
+### 架构限制:为什么 tcpdump 仍能看到明文
+
+sk_msg 只能在**两个都在 sockhash 中的 socket 之间**旁路。本例是用户态代理架构,有两条独立 TCP 连接:
+
+```
+curl ←── conn A ──→ sidecar ── conn B ──→ server
+     (:8080/eph)     (:15006)            (:8080)
+```
+
+sockops 挂在 cgroup `ebpf-proxy-demo`(仅含 sidecar + server PID),**curl 故意不在 cgroup**(透明代理要求 client 无感)。因此 sockhash 中只有 sidecar 和 server 的 socket,**没有 curl 的 socket**:
+
+| socket | conn | 在 sockhash? | 原因 |
+|---|---|---|---|
+| sidecar cli_fd | A | ✓ | sidecar 在 cgroup,sockops PASSIVE 触发 |
+| sidecar up_fd | B | ✓ | sidecar 在 cgroup,sockops ACTIVE 触发 |
+| server socket | B | ✓ | server 在 cgroup,sockops PASSIVE 触发 |
+| **curl socket** | **A** | **✗** | curl 不在 cgroup,sockops 不触发 |
+
+一次入流量请求的 4 个数据段:
+
+| # | 方向 | sk_msg 触发? | 查找结果 | lo 可见? |
+|---|---|---|---|---|
+| ① curl → sidecar (GET) | ✗ curl socket 不在 sockhash | 不触发 | ✓ 走 lo |
+| ② sidecar → server (GET) | ✓ up_fd 在 sockhash | HIT → 旁路 | ✗ |
+| ③ server → sidecar (响应) | ✓ server socket 在 sockhash | HIT → 旁路 | ✗ |
+| ④ sidecar → curl (响应) | ✓ cli_fd 在 sockhash | **MISS**(curl socket 不在) | ✓ 走 lo |
+
+- **hit** 来自 ②③(conn B 双向旁路);**miss** 来自 ④(sidecar→curl 找不到目标 socket)
+- tcpdump 看到的 `HTTP/1.0 200 OK` 是 ④ 走 lo 的结果,**符合预期,不是 bug**
+- 与 29-sockops 对比:29 没有 userspace 代理,curl↔server 直连,两端 socket 都被跟踪,所以 tcpdump 完全看不到明文
+
+**验证方法:**
+
+```bash
+# 1. hit/miss 统计:每次请求 hit+=2 miss+=1
+#    [sidecar] sk_msg stats: hit=4 miss=2   ← miss>0 说明 conn A 未旁路
+
+# 2. trace_pipe:hit 只出现在 conn B 端口,不出现 curl 端口
+sudo cat /sys/kernel/tracing/trace_pipe | grep REDIRECT
+
+# 3. tcpdump 按端口:conn A 有明文,conn B 无
+sudo tcpdump -i lo -A 'tcp port 8080 or tcp port 15006'
+#    :8080 上有 GET + HTTP/1.0 200 OK(conn A,未旁路)
+#    :15006 上只有握手/FIN(conn B,已旁路)
+```
+
+**能否让 conn A 也旁路?** 把 curl 加入 cgroup即可(`echo $$ > /sys/fs/cgroup/ebpf-proxy-demo/cgroup.procs`),但这违背 sk_lookup 透明代理的初衷(要求 client 配合)。本质上,**userspace 代理 + sk_msg 架构只能加速代理↔上游的连接,无法加速 client↔代理的连接**——这是代理架构的固有代价。
+
 ## 端口约定
 
 | 端口 | 用途 |
@@ -183,14 +231,15 @@ sudo ./scripts/setup-veth.sh create
 # 2. 启动 external-server 在 bpfns 内（模拟远程服务）
 ip netns exec bpfns ./src/53-transparent-proxy-v4/external-server &
 
-# 3. 启动 server（监听 0.0.0.0:8080）
-./src/53-transparent-proxy-v4/server &
+# 3. 启动 server（先加入 cgroup，再创建 listening socket！）
+#    --cgroup 确保 listening socket 归属 ebpf-proxy-demo，
+#    否则 sockops 不会对 server 的 accepted socket 触发（见下方"踩坑"）
+./src/53-transparent-proxy-v4/server --cgroup /sys/fs/cgroup/ebpf-proxy-demo &
 SERVER_PID=$!
 
-# 4. 启动 sidecar（传 server PID 作为参数）
+# 4. 启动 sidecar（传 server PID 用于 connect4 劫持）
 #    sidecar 会自动：
-#    - 创建 /sys/fs/cgroup/ebpf-proxy-demo
-#    - 把 sidecar PID + server PID 写入 cgroup.procs
+#    - 把自身 PID 写入 cgroup.procs
 #    - 加载 BPF（sk_lookup + connect4 + sockops + sk_msg）
 #    - 退出时自动清理 cgroup
 sudo ./src/53-transparent-proxy-v4/sidecar $SERVER_PID &
@@ -199,13 +248,11 @@ sudo ./src/53-transparent-proxy-v4/sidecar $SERVER_PID &
 curl http://127.0.0.1:8080/hello       # 入流量（sk_lookup 拦截 → sidecar → server:8080）
 curl http://127.0.0.1:8080/outbound    # 出流量（server connect 被 connect4 拦截 → sidecar → bpfns）
 
-# 6. 查看 BPF trace（重点观察 SKIP + REDIRECT 日志）
-sudo cat /sys/kernel/tracing/trace_pipe
-
-# 7. 观察 sk_msg 加速统计（sidecar 每 5 秒自动输出）
+# 6. 观察 sk_msg 加速统计（sidecar 每 5 秒自动输出）
 #    [sidecar] sk_msg stats: hit=N miss=N
+#    入流量每次 curl 预期 hit+=2 miss+=1
 
-# 8. 清理
+# 7. 清理
 sudo killall sidecar server external-server
 sudo ./scripts/setup-veth.sh delete
 ```
@@ -215,8 +262,10 @@ sudo ./scripts/setup-veth.sh delete
 必须按以下顺序启动：
 
 ```
-external-server → server → sidecar <server_pid>
+external-server → server --cgroup → sidecar <server_pid>
 ```
+
+> **关键**：server 必须用 `--cgroup` 参数在创建 listening socket **之前**加入 cgroup。如果先创建 socket 再迁移进程，socket 仍留在旧 cgroup，sockops 不会对其 accepted socket 触发（详见下方"踩坑"）。
 
 ## 验证点
 
@@ -229,15 +278,61 @@ external-server → server → sidecar <server_pid>
 | 5 | sidecar stdout | `sk_msg stats: hit=N miss=N`（每 5 秒统计） |
 | 6 | Ctrl-C | 所有进程快速退出 |
 
+## 踩坑:server listening socket 的 cgroup 归属
+
+### 问题
+
+sk_msg stats 全 miss(hit=0),sockhash 为空,但 `bpf_sock_hash_update` 返回 0(成功)。通过 diag map 诊断发现:每次 curl 只有 2 次 ESTABLISHED_CB(1 ACTIVE + 1 PASSIVE),应该 3 次(1 ACTIVE + 2 PASSIVE)。缺失的恰好是 **server 的 PASSIVE_ESTABLISHED_CB**。
+
+### 根因
+
+Linux cgroup v2 中,**进程迁移到新 cgroup 不会迁移已有的 socket**。socket 的 cgroup 归属在创建时确定,后续 `write(cgroup.procs)` 只移动进程,不移动已打开的 fd。
+
+原始启动顺序:
+
+```
+1. server 启动 → create_server_socket() → listening socket 在 ROOT cgroup
+2. sidecar 启动 → 把 server PID 写入 ebpf-proxy-demo
+   → server 进程在 ebpf-proxy-demo ✓
+   → 但 listening socket 仍在 ROOT cgroup ✗
+3. server accept() → 新 socket 继承 listening socket 的 cgroup (ROOT)
+4. sockops 挂在 ebpf-proxy-demo → 对 ROOT cgroup 的 socket 不触发
+   → PASSIVE_ESTABLISHED_CB 不触发 → server socket 不入 sockhash
+5. sk_msg 查 sockhash 找不到 server socket → SK_DROP → 全 miss
+```
+
+### 修复
+
+server 加 `--cgroup <path>` 参数,在 `create_server_socket()` **之前**调 `join_cgroup()`,确保 listening socket 创建时已在目标 cgroup 中:
+
+```c
+// server.c main()
+if (cgroup) {
+    join_cgroup(cgroup);  // 先加入 cgroup
+}
+srv_fd = create_server_socket();  // 再创建 socket → 归属目标 cgroup ✓
+```
+
+### 诊断方法
+
+当时 `bpf_trace_printk`/`bpf_trace_vprintk` 在此环境(内核 7.0.0)的 trace_pipe 中不可见。改用 BPF_MAP_TYPE_ARRAY 诊断 map 记录:
+
+| diag 索引 | 含义 | 修复前 | 修复后 |
+|---|---|---|---|
+| ACTIVE 计数 | sidecar connect 触发 | 2 | 2 |
+| PASSIVE 计数 | accept 触发(应 2:sidecar+server) | 2(缺 server) | 4 ✓ |
+| hash_ret | bpf_sock_hash_update 返回值 | 0(成功) | 0 |
+| sk_msg ret | bpf_msg_redirect_hash 返回值 | 0(SK_DROP) | 1(SK_PASS) ✓ |
+
 ## 文件结构
 
 ```
 53-transparent-proxy-v4/
 ├── Makefile              # 三二进制（EXTRA_LDFLAGS := -lpthread）
 ├── proxy.h               # VIRTUAL_PORT = SERVER_PORT = 8080
-├── sidecar.bpf.c         # 4 程序 + 7 map（sk_lookup PID 排除 + redir_stats 计数）
+├── sidecar.bpf.c         # 4 程序 + 6 map（sk_lookup PID 排除 + redir_stats 计数）
 ├── sidecar.c             # loader + TCP 代理（pthread 并发 + 统计线程 + 回源 :8080）
-├── server.c              # HTTP echo on 0.0.0.0:8080 + /outbound
+├── server.c              # HTTP echo on 0.0.0.0:8080 + --cgroup 提前加入 cgroup
 ├── external-server.c     # bpfns :9090
 ├── run-demo.sh           # 一键演示
 └── README.md
@@ -263,3 +358,5 @@ external-server → server → sidecar <server_pid>
 | `bpf_msg_redirect_hash` | sk_msg 程序中绕过 TCP/IP 协议栈直接重定向数据 |
 | `BPF_MAP_TYPE_PERCPU_ARRAY` | per-CPU 计数器，统计 sk_msg redirect hit/miss |
 | 可观测性 | 统计线程 + trace_pipe 双重观测本地加速效果 |
+| cgroup v2 socket 归属 | 进程迁移不迁移已有 socket；listening socket 必须在 cgroup 内创建 |
+| `enum sk_action` | `SK_DROP=0`、`SK_PASS=1`，与直觉相反，`bpf_msg_redirect_hash` 成功返回 `SK_PASS` |

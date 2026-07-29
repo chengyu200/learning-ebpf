@@ -50,8 +50,8 @@ ip netns exec bpfns "$EXE/external-server" &
 EXT_PID=$!
 sleep 0.5
 
-echo "==> 4. 启动 server（:9000）"
-"$EXE/server" &
+echo "==> 4. 启动 server（:8080，先加入 cgroup 再创建 listening socket）"
+"$EXE/server" --cgroup /sys/fs/cgroup/ebpf-proxy-demo &
 SERVER_PID=$!
 sleep 0.5
 

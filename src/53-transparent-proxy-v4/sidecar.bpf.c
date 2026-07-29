@@ -206,7 +206,11 @@ int bpf_sockops_handler(struct bpf_sock_ops *skops)
 		skey.sport = bpf_htonl(skops->local_port);
 		skey.dport = skops->remote_port;
 		skey.family = skops->family;
-		bpf_sock_hash_update(skops, &sock_ops_map, &skey, BPF_NOEXIST);
+		int hash_ret = bpf_sock_hash_update(skops, &sock_ops_map,
+						    &skey, BPF_NOEXIST);
+		bpf_printk("sockops: op=%d lp=%u rp=%u hash_ret=%d",
+			   skops->op, skops->local_port,
+			   bpf_ntohl(skops->remote_port), hash_ret);
 	}
 
 	/* 仅 ACTIVE 侧做 cookie→conn_key 桥接（出流量用） */
@@ -251,15 +255,19 @@ int bpf_redir(struct sk_msg_md *msg)
 
 	ret = bpf_msg_redirect_hash(msg, &sock_ops_map, &key, BPF_F_INGRESS);
 
-	stat_key = (ret == 0) ? 0 : 1;  /* 0=hit, 1=miss */
+	stat_key = (ret == SK_PASS) ? 0 : 1;  /* 0=hit, 1=miss; SK_PASS=1 on success */
 	cnt = bpf_map_lookup_elem(&redir_stats, &stat_key);
 	if (cnt)
 		__sync_fetch_and_add(cnt, 1);
 
-	if (ret == 0)
+	if (ret == SK_PASS)
 		bpf_printk("sk_msg: REDIRECT hit %d->%d",
 			   bpf_ntohs(msg->local_port),
 			   bpf_ntohs(msg->remote_port));
+	else
+		bpf_printk("sk_msg: MISS ret=%d lp=%u rp=%u",
+			   ret, msg->local_port,
+			   bpf_ntohl(msg->remote_port));
 
 	return SK_PASS;
 }

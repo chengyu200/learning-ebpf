@@ -307,23 +307,8 @@ int main(int argc, char **argv)
 			goto cleanup;
 		}
 		printf("[sidecar] server_pid=%d (outbound hijack enabled)\n", pid);
-
-		/* 把 server PID 加入 cgroup，使 connect4 能拦截 server 的出连接 */
-		int procs_fd = open(DEMO_CGROUP "/cgroup.procs", O_WRONLY);
-		if (procs_fd < 0) {
-			fprintf(stderr, "[sidecar] open cgroup.procs for server: %s\n",
-				strerror(errno));
-		} else {
-			char spbuf[32];
-			int slen = snprintf(spbuf, sizeof(spbuf), "%u", pid);
-			if (write(procs_fd, spbuf, slen) != slen) {
-				fprintf(stderr, "[sidecar] add server to cgroup: %s\n",
-					strerror(errno));
-			} else {
-				printf("[sidecar] server_pid=%d added to cgroup\n", pid);
-			}
-			close(procs_fd);
-		}
+		/* server 应已通过 --cgroup 自行加入 cgroup（在创建 listening
+		 * socket 之前），此处不再代写，避免 socket cgroup 不一致。 */
 	} else {
 		printf("[sidecar] server_pid not set, outbound hijack disabled\n");
 		printf("[sidecar] usage: %s <server_pid>\n", argv[0]);

@@ -261,9 +261,9 @@ int bpf_redir(struct sk_msg_md *msg)
 		__sync_fetch_and_add(cnt, 1);
 
 	if (ret == SK_PASS)
-		bpf_printk("sk_msg: REDIRECT hit %d->%d",
-			   bpf_ntohs(msg->local_port),
-			   bpf_ntohs(msg->remote_port));
+		bpf_printk("sk_msg: REDIRECT hit %u->%u",
+			   msg->local_port,
+			   bpf_ntohl(msg->remote_port));
 	else
 		bpf_printk("sk_msg: MISS ret=%d lp=%u rp=%u",
 			   ret, msg->local_port,

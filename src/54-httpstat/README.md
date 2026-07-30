@@ -140,3 +140,19 @@ curl http://127.0.0.1:8080/notfound
 | 用户态聚合 | 固定大小数组 + 线性搜索 + qsort 排序 |
 | `inet_ntop` vs `inet_ntoa` | `inet_ntoa` 用静态缓冲区，同一 printf 中两次调用会互相覆盖；`inet_ntop` 线程安全 |
 | `sigaction` + `SIGALRM` | 定时触发统计报告（20 秒间隔） |
+
+## `__sk_buff` 字段可用性说明
+
+`struct __sk_buff` 中有 `data` 和 `data_end` 字段，看起来可以直接做指针解引用访问包数据（像 XDP/TC 那样）。但实测发现 **socket filter 程序类型不允许访问这两个字段**——验证器报错 `invalid bpf_context access off=80`。
+
+这是 socket filter 与 TC/XDP 的本质区别：
+
+| `__sk_buff` 字段 | socket_filter | TC (sched_cls) | XDP (`xdp_md`) |
+|---|---|---|---|
+| `protocol`, `pkt_type`, `ifindex` | ✅ | ✅ | — |
+| `data` / `data_end` | ❌ | ✅ | ✅（`xdp_md.data`） |
+| `remote_ip4`, `local_ip4` 等 | ❌ | ❌ | — |
+
+因此 socket filter **必须**用 `bpf_skb_load_bytes` 读取包数据，无法像 41-xdp-tcpdump / 20-tc 那样用直接指针方式。`__sk_buff` 中 `remote_ip4` / `local_ip4` / `remote_port` / `local_port` 等字段标注为"仅 `BPF_PROG_TYPE_SK_SKB` 可访问"，socket filter 同样不可用。
+
+如需直接指针方式，可改用 TC（`SEC("tc")` + `bpf_tc_hook_create` + `bpf_tc_attach`），但会改变用户态 attach 方式。

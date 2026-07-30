@@ -107,7 +107,7 @@ static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 	       e->ts_us / 1000000, e->ts_us % 1000000,
 	       e->delta_us / 1000000, e->delta_us % 1000000,
 	       state_name(e->oldstate), state_name(e->newstate),
-	       s, e->sport, d, ntohs(e->dport));
+	       s, e->sport, d, e->dport);
 }
 
 static void handle_lost(void *ctx, int cpu, __u64 cnt)

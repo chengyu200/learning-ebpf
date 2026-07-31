@@ -43,7 +43,7 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *fmt, va_li
 static int get_peer_mac_cross_ns(const char *peer_ifname, const char *peer_ns,
                                  __u8 mac[6])
 {
-    char cmd[256], buf[32];
+    char cmd[256];
     snprintf(cmd, sizeof(cmd),
              "ip netns exec %s cat /sys/class/net/%s/address 2>/dev/null",
              peer_ns, peer_ifname);

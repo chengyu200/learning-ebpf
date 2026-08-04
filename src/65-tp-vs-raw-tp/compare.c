@@ -6,7 +6,18 @@
  * 每秒读取 per-CPU 统计并打印性能对比。
  *
  * 用法：
- *   sudo ./compare [duration_sec]   # 默认 10 秒
+ *   sudo ./compare [duration_sec] [--count-only]
+ *
+ * 模式：
+ *   默认（无 --count-only）：计数 + 读取字段
+ *     TP 直接访问 ctx->prev_pid（无 CO-RE 开销）
+ *     RAW_TP 用 BPF_CORE_READ 读取 task_struct->pid（有 CO-RE 开销）
+ *     → 预期 TP 更快（BPF 程序内部开销更低）
+ *
+ *   --count-only：只计数，跳过字段读取
+ *     两个程序都不读字段，只做 count++
+ *     → 对比纯内核侧开销（TP 有格式化开销，RAW_TP 跳过格式化）
+ *     → 预期 RAW_TP 更快（内核侧开销更低）
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +26,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <time.h>
+#include <stdbool.h>
 #include <bpf/libbpf.h>
 #include <bpf/bpf.h>
 #include "compare.h"
@@ -56,19 +68,37 @@ int main(int argc, char **argv)
 	struct compare_bpf *skel;
 	int err = 0;
 	int duration = 10;
+	bool count_only = false;
 
-	if (argc > 1)
-		duration = atoi(argv[1]);
+	/* 解析参数 */
+	for (int i = 1; i < argc; i++) {
+		if (strcmp(argv[i], "--count-only") == 0) {
+			count_only = true;
+		} else {
+			duration = atoi(argv[i]);
+			if (duration <= 0)
+				duration = 10;
+		}
+	}
 
 	setvbuf(stdout, NULL, _IONBF, 0);
 	signal(SIGINT, sig_handler);
 	signal(SIGTERM, sig_handler);
 	libbpf_set_print(libbpf_print_fn);
 
-	skel = compare_bpf__open_and_load();
+	skel = compare_bpf__open();
 	if (!skel) {
-		fprintf(stderr, "Failed to open and load BPF skeleton\n");
+		fprintf(stderr, "Failed to open BPF skeleton\n");
 		return 1;
+	}
+
+	/* 设置 read_fields：--count-only 时设为 false */
+	skel->rodata->read_fields = !count_only;
+
+	err = compare_bpf__load(skel);
+	if (err) {
+		fprintf(stderr, "Failed to load BPF skeleton: %d\n", err);
+		goto cleanup;
 	}
 
 	err = compare_bpf__attach(skel);
@@ -81,7 +111,11 @@ int main(int argc, char **argv)
 	int raw_fd = bpf_map__fd(skel->maps.raw_tp_stats);
 
 	printf("Loading BPF programs (tracepoint + raw_tracepoint)...\n");
-	printf("Both attached to sched/sched_switch. Measuring for %d seconds...\n\n", duration);
+	printf("Both attached to sched/sched_switch. Measuring for %d seconds...\n", duration);
+	printf("Mode: %s\n\n",
+	       count_only ? "COUNT-ONLY (skip field reads, compare kernel-side overhead)"
+			  : "FULL (count + read fields, compare BPF program overhead)");
+
 	printf("%-6s  %-12s %12s %12s %12s %12s %12s\n",
 	       "", "TRACEPOINT", "", "", "RAW_TRACEPOINT", "", "");
 	printf("%-6s  %12s %12s %12s %12s %12s %12s\n",
@@ -131,7 +165,7 @@ int main(int argc, char **argv)
 
 	printf("\n");
 	printf("═══════════════════════════════════════════════════════════════\n");
-	printf("  Summary\n");
+	printf("  Summary (%s)\n", count_only ? "COUNT-ONLY" : "FULL");
 	printf("═══════════════════════════════════════════════════════════════\n");
 	printf("  TRACEPOINT:     %llu events, %.3f ms total, %.1f ns/evt\n",
 	       tp_final.count, tp_final.total_ns / 1000000.0,

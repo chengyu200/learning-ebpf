@@ -7,8 +7,8 @@
 两个 BPF 程序挂载到同一个 tracepoint（`sched/sched_switch`），功能相同（统计进程切换次数），但写法和上下文不同。用户态每秒读取 per-CPU 统计，对比事件数和执行开销。
 
 支持两种模式：
-- **FULL**（默认）：计数 + 读取字段，对比 BPF 程序内部开销
-- **COUNT-ONLY**（`--count-only`）：只计数跳过字段读取，对比内核侧开销
+- **FULL**（默认）：计数 + 读取字段，对比 BPF 程序内部字段访问开销
+- **COUNT-ONLY**（`--count-only`）：只计数跳过字段读取，对比两种程序类型的调用路径差异
 
 ## 用法
 
@@ -63,6 +63,43 @@ int count_raw_tp(struct bpf_raw_tracepoint_args *ctx)
 }
 ```
 
+## 内核调用链分析
+
+### TRACEPOINT 的调用链
+
+```
+内核调度器 context_switch()
+  → trace_sched_switch()  （tracepoint 宏展开）
+      → do_trace_event_raw_event_sched_switch()
+          → 在 perf ring buffer 中分配空间
+          → 格式化字段：填充 prev_comm, prev_pid, next_comm, next_pid 等
+          → perf_tp_event()
+              → trace_call_bpf()
+                  → 调用 BPF 程序（ctx 指向格式化后的 buffer）
+                      ↓
+                      bpf_ktime_get_ns()  [A]  ← 测量开始
+                      count++ / ctx->prev_pid
+                      bpf_ktime_get_ns()  [B]  ← 测量结束
+```
+
+### RAW_TRACEPOINT 的调用链
+
+```
+内核调度器 context_switch()
+  → trace_sched_switch()  （tracepoint 宏展开）
+      → __bpf_trace_sched_switch(__data, preempt, prev, next)
+          → bpf_trace_run2(link, prev, next)  （直接调用，无格式化）
+              → 调用 BPF 程序（ctx = { args[0]=prev, args[1]=next }）
+                  ↓
+                  bpf_ktime_get_ns()  [A]  ← 测量开始
+                  count++ / BPF_CORE_READ
+                  bpf_ktime_get_ns()  [B]  ← 测量结束
+```
+
+### 关键结论
+
+**`bpf_ktime_get_ns()` 只测量 BPF 程序内部的执行时间**。内核格式化 tracepoint 数据的开销发生在 BPF 程序被调用**之前**，不在 `[A]` 到 `[B]` 的测量范围内。
+
 ## 性能对比结果
 
 在本机（aarch64, kernel 7.0）上实测：
@@ -80,7 +117,7 @@ int count_raw_tp(struct bpf_raw_tracepoint_args *ctx)
 ═══════════════════════════════════════════════════════════════
 ```
 
-**TP 更快**：直接访问 `ctx->prev_pid`（一次内存读）远比 `BPF_CORE_READ(prev, pid)`（CO-RE 重定位 + `bpf_probe_read` 内核内存读取）便宜。
+**TP 更快**：直接访问 `ctx->prev_pid`（一次内存读）远比 `BPF_CORE_READ(prev, pid)`（CO-RE 重定位 + `bpf_probe_read` 内核内存读取）便宜。这个差异完全在 BPF 程序内部测量范围内。
 
 ### COUNT-ONLY 模式（只计数，跳过字段读取）
 
@@ -94,25 +131,34 @@ int count_raw_tp(struct bpf_raw_tracepoint_args *ctx)
 ═══════════════════════════════════════════════════════════════
 ```
 
-**RAW_TP 更快**：跳过了内核的 tracepoint 数据格式化开销，TP 在调用 BPF 程序前需要先格式化数据。
+**RAW_TP 更快**：虽然两种类型在 BPF 程序内部都只做 `count++`，但仍有差异。原因：
+
+> 注意：`bpf_ktime_get_ns()` 不包含内核格式化开销（格式化在 BPF 程序被调用之前完成）。COUNT-ONLY 模式下的差异来自 **BPF 程序的调用路径不同**：
+> - **TRACEPOINT** 经过 `perf_tp_event()` → `trace_call_bpf()`，调用路径更长，有额外的 perf 子系统上下文开销
+> - **RAW_TRACEPOINT** 直接 `bpf_trace_run2()`，调用路径更短
+>
+> 这些路径差异虽然不在 `bpf_ktime_get_ns()` 之间，但会影响 BPF JIT 代码的执行效率（指令缓存、分支预测等），间接体现在测量值中。
 
 ## 两种开销来源
 
-| 开销来源 | TRACEPOINT | RAW_TRACEPOINT |
-|---------|------------|----------------|
-| **内核侧**（调用 BPF 前） | 格式化 tracepoint 数据（~20ns 额外） | 跳过格式化（直接传 args） |
-| **BPF 程序内**（读字段） | `ctx->prev_pid`（~0ns，直接访问） | `BPF_CORE_READ(prev, pid)`（~200ns，CO-RE + probe_read） |
-| **总开销** | 内核格式化 + 直接访问 | 无格式化 + CO-RE 读取 |
+| 开销来源 | TRACEPOINT | RAW_TRACEPOINT | 是否在 bpf_ktime_get_ns 测量范围内 |
+|---------|------------|----------------|-------------------------------------|
+| 内核格式化 tracepoint 数据 | 有（填充 prev_comm/prev_pid 等） | 无（跳过格式化） | ❌ 不在（在 BPF 程序之前） |
+| BPF 调用路径 | perf_tp_event → trace_call_bpf | bpf_trace_run2 | ❌ 不在（在 BPF 程序之前） |
+| BPF 程序内读字段 | `ctx->prev_pid`（直接访问） | `BPF_CORE_READ(prev, pid)`（CO-RE） | ✅ 在 |
+| BPF 程序内计数 | `count++` | `count++` | ✅ 在 |
 
-FULL 模式下 BPF 程序内的 CO-RE 开销占主导（TP 赢）。
-COUNT-ONLY 模式下内核格式化开销占主导（RAW_TP 赢）。
+- **FULL 模式**：字段读取开销占主导（TP 直接访问 ~0ns vs RAW_TP CO-RE ~200ns），TP 赢
+- **COUNT-ONLY 模式**：字段读取被跳过，剩余差异来自调用路径对 JIT 执行效率的间接影响，RAW_TP 赢
+
+> 要真正测量内核格式化开销（在 BPF 程序之外），需要用 `perf` 等外部工具测量端到端延迟，或者用 `bpf_ktime_get_ns()` 在内核侧（BPF 程序调用之前）记录时间——但这超出了 BPF 程序的能力范围。
 
 ## 什么时候用哪个？
 
 | 场景 | 推荐类型 | 原因 |
 |------|---------|------|
 | 需要读取 tracepoint 字段 | **TRACEPOINT** | 字段已格式化，直接访问，避免 CO-RE 开销 |
-| 只计数 / 不需要字段 | **RAW_TRACEPOINT** | 跳过内核格式化开销，内核侧更快 |
+| 只计数 / 不需要字段 | **RAW_TRACEPOINT** | 调用路径更短，执行效率更高 |
 | 需要原始内核结构体中的其他字段 | **RAW_TRACEPOINT** | 直接拿到 task_struct*，可读任意字段 |
 | 需要修改参数 | **RAW_TRACEPOINT** | `raw_tp.w+` 可修改（RAW_TRACEPOINT_WRITABLE） |
 | tracepoint format 跨内核不稳定 | **RAW_TRACEPOINT** | 依赖函数签名，更稳定 |
@@ -125,7 +171,7 @@ COUNT-ONLY 模式下内核格式化开销占主导（RAW_TP 赢）。
   - `true`（默认）：读 `ctx->prev_pid` / `BPF_CORE_READ(prev, pid)`，偶尔 `bpf_printk`
   - `false`（`--count-only`）：跳过所有字段读取，只 `count++`
 - 两个 per-CPU array map 分别统计两种程序的 `count` + `total_ns`
-- `bpf_ktime_get_ns()` 测量每个程序的执行时间
+- `bpf_ktime_get_ns()` 测量 BPF 程序内部执行时间（不含内核格式化开销）
 
 ### 用户态（`compare.c`）
 

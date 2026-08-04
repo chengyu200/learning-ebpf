@@ -70,6 +70,7 @@ vmlinux/*/vmlinux.h
 /src/*/sysctl-monitor
 /src/*/sk-lookup-proxy
 /src/*/fsession
+/src/*/compare
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

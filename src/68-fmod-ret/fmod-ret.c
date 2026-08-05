@@ -30,20 +30,20 @@
 #include "fmod-ret.skel.h"
 
 static struct env {
-	pid_t pid;       /* 目标进程 PID（0 = 所有进程） */
-	int errno_val;   /* 注入的错误码（0 = 不注入） */
+	pid_t pid;       /* 目标进程 PID（必须指定，-1 = 未设置） */
+	int errno_val;   /* 注入的错误码（默认 -12 = ENOMEM） */
 	bool verbose;
-} env = { .pid = 0, .errno_val = -12, .verbose = false };
+} env = { .pid = -1, .errno_val = -12, .verbose = false };
 
 const char *argp_program_version = "fmod-ret 0.1";
 const char argp_program_doc[] =
 "Inject errors into read() via BPF_MODIFY_RETURN.\n\n"
 "USAGE: ./fmod-ret --pid <PID> [--errno <ERRNO>] [-v]\n"
-"  --pid 0 means all processes (dangerous!)\n"
+"  --pid is required. 0 = all processes (dangerous!)\n"
 "  --errno: -12=ENOMEM, -1=EPERM, -13=EACCES, -5=EIO, etc.\n";
 
 static const struct argp_option opts[] = {
-	{ "pid",    'p', "PID",    0, "Target process PID (0 = all)" },
+	{ "pid",    'p', "PID",    0, "Target process PID (required, 0 = all)" },
 	{ "errno",  'e', "ERRNO",  0, "Error code to inject (default: -12 = -ENOMEM)" },
 	{ "verbose",'v', NULL,     0, "Verbose libbpf debug output" },
 	{},
@@ -92,6 +92,15 @@ int main(int argc, char **argv)
 	int err = 0;
 
 	argp_parse(&argp, argc, argv, 0, NULL, NULL);
+
+	/* --pid 是必填参数 */
+	if (env.pid < 0) {
+		fprintf(stderr, "Error: --pid is required.\n");
+		fprintf(stderr, "Usage: %s --pid <PID> [--errno <ERRNO>] [-v]\n", argv[0]);
+		fprintf(stderr, "  --pid 0 means all processes (dangerous!)\n");
+		return 1;
+	}
+
 	setvbuf(stdout, NULL, _IONBF, 0);
 	signal(SIGINT, sig_handler);
 	signal(SIGTERM, sig_handler);

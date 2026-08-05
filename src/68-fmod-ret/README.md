@@ -45,24 +45,26 @@ fexit（观察参数 + 返回值）
 ```bash
 make -C src/68-fmod-ret
 
-# 对特定 PID 注入 -ENOMEM（-12）
+# 对特定 PID 注入 -ENOMEM（-12）— --pid 是必填参数
 sudo ./src/68-fmod-ret/fmod-ret --pid <PID> --errno -12
 
 # 对特定 PID 注入 -EPERM（-1）
 sudo ./src/68-fmod-ret/fmod-ret --pid <PID> --errno -1
 
-# 对所有进程注入（危险！）
+# 对所有进程注入（危险！需要明确传 --pid 0）
 sudo ./src/68-fmod-ret/fmod-ret --pid 0 --errno -12
 ```
 
 参数：
-- `--pid <PID>`：目标进程 PID（0 = 所有进程）
+- `--pid <PID>`：**必填**。目标进程 PID（0 = 所有进程，危险！）
 - `--errno <N>`：注入的错误码（默认 -12 = ENOMEM）
   - `-1` = EPERM（操作不允许）
   - `-5` = EIO（输入输出错误）
   - `-12` = ENOMEM（内存不足）
   - `-13` = EACCES（权限不足）
 - `Ctrl-C` 停止注入
+
+> 不传 `--pid` 会报错退出，避免误操作对所有进程注入错误。
 
 ## 验证
 

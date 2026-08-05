@@ -71,6 +71,7 @@ vmlinux/*/vmlinux.h
 /src/*/sk-lookup-proxy
 /src/*/fsession
 /src/*/compare
+/src/*/fmod-ret
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

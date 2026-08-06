@@ -34,6 +34,7 @@
 #define IPPROTO_ICMP 1
 #define IPPROTO_TCP  6
 #define ETH_HLEN     14
+#define ETH_P_IP     0x0800
 
 /* primary 端统计（host→container 的包，primary 发送时计数） */
 struct {
@@ -51,7 +52,8 @@ struct {
 	__type(value, struct stats);
 } peer_stats SEC(".maps");
 
-/* 解析 IP 头并提取协议号和 L4 端口 */
+/* 解析 IP 头并提取协议号和 L4 端口。
+ * 返回 0 = IPv4 解析成功，-1 = 非 IPv4 或解析失败（调用方应跳过不计数） */
 static __always_inline int parse_skb(struct __sk_buff *skb, __u8 *proto,
 				     __u16 *dport)
 {
@@ -62,6 +64,10 @@ static __always_inline int parse_skb(struct __sk_buff *skb, __u8 *proto,
 	__u8 ihl;
 
 	if ((void *)(eth + 1) > data_end)
+		return -1;
+
+	/* 只处理 IPv4，跳过 IPv6 邻居发现等非 IPv4 流量 */
+	if (eth->h_proto != bpf_htons(ETH_P_IP))
 		return -1;
 
 	iph = (void *)(eth + 1);
@@ -97,11 +103,11 @@ int primary_filter(struct __sk_buff *skb)
 	if (!s)
 		return NETKIT_PASS;
 
-	s->packets++;
-	s->bytes += skb->len;
-
 	if (parse_skb(skb, &proto, &dport) < 0)
 		return NETKIT_PASS;
+
+	s->packets++;
+	s->bytes += skb->len;
 
 	/* 丢弃目标端口 8080 的 TCP 包（禁止宿主机访问容器的 8080） */
 	if (proto == IPPROTO_TCP && dport == 8080) {
@@ -126,11 +132,11 @@ int peer_filter(struct __sk_buff *skb)
 	if (!s)
 		return NETKIT_PASS;
 
-	s->packets++;
-	s->bytes += skb->len;
-
 	if (parse_skb(skb, &proto, &dport) < 0)
 		return NETKIT_PASS;
+
+	s->packets++;
+	s->bytes += skb->len;
 
 	/* 丢弃 ICMP（禁止容器 ping 宿主机） */
 	if (proto == IPPROTO_ICMP) {

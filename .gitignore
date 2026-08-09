@@ -74,6 +74,7 @@ vmlinux/*/vmlinux.h
 /src/*/fmod-ret
 /src/*/netkit
 /src/*/uprobe-multi-session
+/src/*/netfilter
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

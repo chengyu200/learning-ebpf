@@ -141,17 +141,17 @@ static void run_in_cgroup(void)
 	/* 进入 cgroup */
 	fd = open(DEMO_CGROUP "/cgroup.procs", O_WRONLY);
 	if (fd < 0) {
-		fprintf(stderr, "  [child] open cgroup.procs: %s\n", strerror(errno));
+		fprintf(stderr, "\t  [child] open cgroup.procs: %s\n", strerror(errno));
 		_exit(1);
 	}
 	snprintf(buf, sizeof(buf), "%d", getpid());
 	write(fd, buf, strlen(buf));
 	close(fd);
 	usleep(100000);
-	fprintf(stderr, "  [child] moved into cgroup (pid=%d)\n\n", getpid());
+	fprintf(stderr, "\t  [child] moved into cgroup (pid=%d)\n\n", getpid());
 
 	/* ── TCP IPv4 ── */
-	fprintf(stderr, "  --- TCP IPv4 ---\n");
+	fprintf(stderr, "\t  --- TCP IPv4 ---\n");
 	int s4 = socket(AF_INET, SOCK_STREAM, 0);
 	int c4 = socket(AF_INET, SOCK_STREAM, 0);
 
@@ -168,9 +168,9 @@ static void run_in_cgroup(void)
 	getpeername(c4, (struct sockaddr *)&actual, &alen);
 	getsockname(c4, (struct sockaddr *)&actual, &alen);
 	close(s4); close(c4);
-
+	sleep(2);
 	/* ── UDP IPv4 ── */
-	fprintf(stderr, "  --- UDP IPv4 ---\n");
+	fprintf(stderr, "\t  --- UDP IPv4 ---\n");
 	int u4s = socket(AF_INET, SOCK_DGRAM, 0);  /* sender */
 	int u4r = socket(AF_INET, SOCK_DGRAM, 0);  /* receiver */
 	setsockopt(u4r, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -192,9 +192,10 @@ static void run_in_cgroup(void)
 	socklen_t src4len = sizeof(src4);
 	recvfrom(u4r, rbuf, sizeof(rbuf), 0, (struct sockaddr *)&src4, &src4len);
 	close(u4s); close(u4r);
+	sleep(2);
 
 	/* ── TCP IPv6 ── */
-	fprintf(stderr, "  --- TCP IPv6 ---\n");
+	fprintf(stderr, "\t  --- TCP IPv6 ---\n");
 	int s6 = socket(AF_INET6, SOCK_STREAM, 0);
 	int c6 = socket(AF_INET6, SOCK_STREAM, 0);
 
@@ -211,9 +212,10 @@ static void run_in_cgroup(void)
 	getpeername(c6, (struct sockaddr *)&actual, &alen);
 	getsockname(c6, (struct sockaddr *)&actual, &alen);
 	close(s6); close(c6);
+	sleep(2);
 
 	/* ── UDP IPv6 ── */
-	fprintf(stderr, "  --- UDP IPv6 ---\n");
+	fprintf(stderr, "\t  --- UDP IPv6 ---\n");
 	int u6s = socket(AF_INET6, SOCK_DGRAM, 0);  /* sender */
 	int u6r = socket(AF_INET6, SOCK_DGRAM, 0);  /* receiver */
 	setsockopt(u6r, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
@@ -234,9 +236,10 @@ static void run_in_cgroup(void)
 	socklen_t src6len = sizeof(src6);
 	recvfrom(u6r, rbuf, sizeof(rbuf), 0, (struct sockaddr *)&src6, &src6len);
 	close(u6s); close(u6r);
+	sleep(2);
 
 	/* ── Unix socket ── */
-	fprintf(stderr, "  --- Unix socket ---\n");
+	fprintf(stderr, "\t  --- Unix socket ---\n");
 	const char *sockpath = "/tmp/cg-sock-monitor-unix";
 	unlink(sockpath);
 
@@ -247,6 +250,13 @@ static void run_in_cgroup(void)
 	listen(us, 1);
 
 	int uc = socket(AF_UNIX, SOCK_STREAM, 0);
+	/* 显式 bind 到 abstract name，使 addr != NULL，
+	 * 否则 getsockname 不会触发 BPF hook（unix_getname 跳过 addr==NULL 的 socket） */
+	struct sockaddr_un ubindc = { .sun_family = AF_UNIX };
+	ubindc.sun_path[0] = 0;  /* abstract namespace 第一个字节为 0 */
+	ubindc.sun_path[1] = 'c';
+	bind(uc, (struct sockaddr *)&ubindc, sizeof(ubindc));
+
 	struct sockaddr_un udst = { .sun_family = AF_UNIX };
 	strncpy(udst.sun_path, sockpath, sizeof(udst.sun_path) - 1);
 	connect(uc, (struct sockaddr *)&udst, sizeof(udst));
@@ -254,9 +264,17 @@ static void run_in_cgroup(void)
 	getsockname(uc, (struct sockaddr *)&uaddr, &(socklen_t){sizeof(uaddr)});
 	close(us); close(uc);
 	unlink(sockpath);  /* 清理 STREAM socket 文件，供 DGRAM 复用路径 */
+	sleep(2);
 
 	/* Unix DGRAM */
+	fprintf(stderr, "\t  --- Unix DGRAM ---\n");
 	int ud = socket(AF_UNIX, SOCK_DGRAM, 0);
+	/* 给 sender 也 bind 到 abstract name（使 getsockname 能触发 BPF hook） */
+	struct sockaddr_un udbind = { .sun_family = AF_UNIX };
+	udbind.sun_path[0] = 0;
+	udbind.sun_path[1] = 'd';
+	bind(ud, (struct sockaddr *)&udbind, sizeof(udbind));
+
 	int ur = socket(AF_UNIX, SOCK_DGRAM, 0);
 	setsockopt(ur, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 	struct sockaddr_un ubindun = { .sun_family = AF_UNIX };
@@ -272,8 +290,9 @@ static void run_in_cgroup(void)
 	getsockname(ur, (struct sockaddr *)&uaddr, &(socklen_t){sizeof(uaddr)});
 	close(ud); close(ur);
 	unlink(sockpath);
+	sleep(2);
 
-	fprintf(stderr, "  [child] All socket operations done.\n\n");
+	fprintf(stderr, "\t  [child] All socket operations done.\n\n");
 	usleep(500000);  /* 给父进程时间 poll 剩余 ringbuf 事件 */
 	_exit(0);
 }

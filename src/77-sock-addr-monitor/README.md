@@ -95,14 +95,15 @@ BPF events:
   [RECVMSG6    ] family=AF_INET6 type=DGRAM  proto=UDP port=57101  ip=::1  pid=12345
   [CONNECT_UNIX] family=AF_UNIX  type=STREAM proto=-   port=0      ip=-  pid=12345
   [GETPEER_UNX ] family=AF_UNIX  type=STREAM proto=-   port=0      ip=-  pid=12345
+  [GETSOCK_UNX ] family=AF_UNIX  type=STREAM proto=-   port=0      ip=-  pid=12345
   [SENDMSG_UNIX] family=AF_UNIX  type=DGRAM  proto=-   port=0      ip=-  pid=12345
-  [RECVMSG_UNIX] family=other    type=DGRAM  proto=-   port=0      ip=-  pid=12345
+  [RECVMSG_UNIX] family=AF_UNIX  type=DGRAM  proto=-   port=0      ip=-  pid=12345
   [GETSOCK_UNX ] family=AF_UNIX  type=DGRAM  proto=-   port=0      ip=-  pid=12345
 
 All socket operations demonstrated.
 ```
 
-> 注：事件可能在子进程操作完成后才被父进程 poll 到，因此输出顺序可能与操作顺序不完全一致。`RECVMSG_UNIX` 的 `family=other` 是因为 Unix socket 的 `user_family` 字段在 recvmsg 上下文中可能不是 `AF_UNIX`。
+> 注：事件可能在子进程操作完成后才被父进程 poll 到，因此输出顺序可能与操作顺序不完全一致。Unix socket 客户端需要显式 `bind()` 到 abstract name，否则 `getsockname_unix` hook 不会触发（内核 `unix_getname()` 在 `addr==NULL` 时跳过 BPF hook）。
 
 ## 教学概念
 
@@ -164,6 +165,31 @@ recvfrom(fd, buf, len, 0, NULL, NULL);
 ### Unix socket 的特殊性
 
 Unix socket 没有 IP 地址和端口号，`bpf_sock_addr` 中的 `user_ip4`/`user_port` 不适用。Unix socket 的路径信息不在 `bpf_sock_addr` 上下文中（需要通过 `sk` 指针间接访问）。
+
+**重要**：`getsockname_unix` / `getpeername_unix` hook 仅在 socket **已绑定地址**（`addr != NULL`）时才触发。内核源码 `net/unix/af_unix.c` 中的 `unix_getname()` 函数：
+
+```c
+addr = smp_load_acquire(&unix_sk(sk)->addr);
+if (!addr) {
+    // addr == NULL：直接返回默认地址，不调用 BPF hook
+    sunaddr->sun_family = AF_UNIX;
+    sunaddr->sun_path[0] = 0;
+    err = offsetof(struct sockaddr_un, sun_path);
+} else {
+    // addr != NULL：复制地址，然后调用 BPF hook
+    memcpy(sunaddr, addr->name, addr->len);
+    BPF_CGROUP_RUN_SA_PROG(..., CGROUP_UNIX_GETSOCKNAME);  // ← 只在这里
+}
+```
+
+如果客户端 socket 没有显式 `bind()`，它的 `addr` 为 NULL，`getsockname` 不会触发 BPF hook。解决方法是显式 `bind()` 到一个 abstract name：
+
+```c
+struct sockaddr_un ubind = { .sun_family = AF_UNIX };
+ubind.sun_path[0] = 0;  // abstract namespace（第一个字节为 0）
+ubind.sun_path[1] = 'c';
+bind(fd, &ubind, sizeof(ubind));  // 现在 addr != NULL，getsockname 会触发
+```
 
 ## 与现有示例的对比
 

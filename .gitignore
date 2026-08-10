@@ -75,6 +75,7 @@ vmlinux/*/vmlinux.h
 /src/*/netkit
 /src/*/uprobe-multi-session
 /src/*/netfilter
+/src/*/cgroup-device
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

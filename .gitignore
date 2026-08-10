@@ -76,6 +76,7 @@ vmlinux/*/vmlinux.h
 /src/*/uprobe-multi-session
 /src/*/netfilter
 /src/*/cgroup-device
+/src/*/sock-addr-monitor
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

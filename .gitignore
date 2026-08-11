@@ -78,6 +78,7 @@ vmlinux/*/vmlinux.h
 /src/*/cgroup-device
 /src/*/sock-addr-monitor
 /src/*/cgroup-sockopt
+/src/*/sk-reuseport
 # Rust/Go targets built by examples
 /src/*/target
 /src/*/gotest

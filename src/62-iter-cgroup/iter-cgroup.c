@@ -41,7 +41,7 @@ int main(int argc, char **argv)
 	const char *cg_path = "/sys/fs/cgroup";
 	const char *order_str = "pre";
 	int order = 2;  /* BPF_CGROUP_ITER_DESCENDANTS_PRE */
-	char buf[512];
+	char buf[65536];  /* large buffer: avoid seq_file stop/start cycle */
 	ssize_t n;
 
 	for (int i = 1; i < argc; i++) {

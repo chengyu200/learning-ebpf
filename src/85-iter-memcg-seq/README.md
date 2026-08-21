@@ -37,7 +37,7 @@ __u64 usage = memcg->memory.usage.counter;  /* atomic_long_t */
 
 - 用 `SEC("iter/cgroup")` 遍历 cgroup 层级（从根 cgroup 开始，前序遍历）
 - 对每个 cgroup，获取其关联的 mem_cgroup
-- 输出：mem_cgroup ID、cgroup level、memory usage（字节）、swap usage（字节）、cgroup 路径
+- 输出：mem_cgroup ID、cgroup level、memory usage（字节）、memory max（字节）、memory high（字节）、swap usage（字节）、cgroup 路径
 
 ## 运行
 
@@ -53,18 +53,25 @@ sudo ./src/85-iter-memcg-seq/iter-memcg-seq
 ```
 === Mem Cgroup Hierarchy (root=/sys/fs/cgroup, order=pre) ===
 
-id         level  memory         swap           path
-─────────  ─────  ──────────────  ─────────────  ──────────────────────────────
-5          0      760312         245760         /
-17         1      4096           397            /init.scope
-21         1      32768          30720          /system.slice
-69         2      1024           0              /system.slice/systemd-udevd.service
-...
-154        1      723456         215040         /user.slice
-545        2      723456         215040         /user.slice/user-1000.slice
-601        3      256000         54272          /user.slice/user-1000.slice/session-4.scope
+id         level  memory(KB)   max(KB)      high(KB)     swap(KB)     path
+─────────  ─────  ────────────  ────────────  ────────────  ────────────  ──────────────────────────────
+5          0      3023136      max          max          1984128      /
+17         1      17448        max          max          1484         /init.scope
+21         1      162116       max          max          124008       /system.slice
 ...
 ```
+
+子树遍历（`--cgroup /sys/fs/cgroup/ai_inference`）：
+```
+id         level  memory(KB)   max(KB)      high(KB)     swap(KB)     path
+─────────  ─────  ────────────  ────────────  ────────────  ────────────  ──────────────────────────────
+12390      1      124          max          max          0            /ai_inference
+12402      2      0            102400       81920        0            /ai_inference/tenant_a
+12403      2      0            102400       81920        0            /ai_inference/tenant_b
+12444      2      108          204800       102400       0            /ai_inference/high_test
+```
+
+> 注：`max` 表示未设置 `memory.max`/`memory.high` 限制（`PAGE_COUNTER_MAX`）。所有数值均为 KB，由 page 个数换算（page_count × 4096 / 1024 = page_count × 4）。
 
 ## 教学概念
 
@@ -77,6 +84,7 @@ id         level  memory         swap           path
 | `container_of(css, mem_cgroup, css)` | 从 css 获取 mem_cgroup（css 是第一个字段） |
 | `BPF_SEQ_PRINTF` | 输出到 seq_file（vs ringbuf） |
 | `BPF_CORE_READ` | 安全读取内核结构体字段（CO-RE） |
+| `memcg->memory.max` / `memory.high` | page_counter 中的 `max` 和 `high` 字段（`unsigned long`） |
 | 无需引用管理 | iter/cgroup 管理生命周期（vs 方案 B 的 `bpf_put_mem_cgroup`） |
 
 ## 技术细节
@@ -110,6 +118,25 @@ linfo.cgroup.cgroup_fd = cg_fd;  /* 起始 cgroup（根 cgroup） */
 ```c
 __u64 usage = BPF_CORE_READ(memcg, memory.usage.counter);
 ```
+
+### memory.max 和 memory.high
+
+`page_counter` 中的 `max` 和 `high` 是 `unsigned long`，存储的是 page 个数。通过 `BPF_CORE_READ` 读取后换算为 KB：
+
+```c
+__u64 max = BPF_CORE_READ(memcg, memory.max);
+__u64 high = BPF_CORE_READ(memcg, memory.high);
+
+/* 换算 KB：page_count * 4096 / 1024 = page_count * 4 */
+if (max == PAGE_COUNTER_MAX)
+    /* 输出 "max"（无限制） */;
+else
+    /* 输出 max * 4（KB） */;
+```
+
+- `max = PAGE_COUNTER_MAX`（`2251799813685247`）表示未设置 `memory.max` 限制，输出 `"max"`
+- `usage` 和 `swap` 也是 page 个数，同样换算为 KB（`page_count * 4`）
+- 在 cgroup v2 中对应 `/sys/fs/cgroup/xxx/memory.max`、`memory.high`、`memory.current` 文件
 
 ## 文件结构
 
